@@ -1,0 +1,27 @@
+.venv/
+data/vinv-tts
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Packaging and build artifacts
+*.egg-info/
+build/
+dist/
+
+# Coverage and type-checker caches
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

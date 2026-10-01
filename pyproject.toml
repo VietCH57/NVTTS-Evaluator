@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nvtts-eval"
+version = "0.1.0"
+description = "Single-model evaluator for the ViNV-TTS shared task"
+requires-python = ">=3.9"
+dependencies = []          # core (parser, manifest, scoring) is stdlib-only
+
+[project.optional-dependencies]
+dev = ["pytest"]
+audio = ["soundfile", "numpy"]
+
+[tool.setuptools.packages.find]
+include = ["nvtts_eval*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
