@@ -56,6 +56,33 @@ class BootstrapConfig:
 
 
 @dataclass
+class NvpaConfig:
+    detector_path: Optional[str] = None   # trained with `train-detector`
+    tolerance_words: int = 1              # [ASSUMPTION] position tolerance in reference words
+    min_window: float = 0.2
+    max_window: float = 3.0
+    unreliable_policy: str = "miss"       # [ASSUMPTION] events that cannot be localised: miss | exclude
+    shuffle_reps: int = 50
+
+
+@dataclass
+class HumanConfig:
+    subset_size: int = 100
+    seed: int = 0
+    rare_type_share: float = 0.05         # NV types with <= this share of events are "rare" and over-sampled
+    max_rare_fraction: float = 0.5        # at most this fraction of the subset is reserved for rare types
+    long_utt_seconds: float = 15.0        # stratification: short vs long utterances
+    head_speaker_min_utts: int = 20       # stratification: head vs tail speakers
+    n_gt_anchors: int = 5                 # hidden ground-truth items per rating package
+    n_degraded_anchors: int = 5           # hidden artificially degraded items
+    degrade_snr_db: float = 5.0
+    anchor_gt_min: float = 3.0            # rater flagged if mean SN on ground-truth anchors is below this
+    anchor_gap_min: float = 0.5           # ... or if ground-truth anchors are not rated this much above degraded ones
+    exclude_flagged: bool = True
+    auto_on_subset: bool = True           # [ASSUMPTION] final score uses automatic metrics on the rated subset
+
+
+@dataclass
 class EvalConfig:
     asr: AsrConfig = field(default_factory=AsrConfig)
     pmos: PMosConfig = field(default_factory=PMosConfig)
@@ -64,6 +91,8 @@ class EvalConfig:
     text_norm: TextNormConfig = field(default_factory=TextNormConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     bootstrap: BootstrapConfig = field(default_factory=BootstrapConfig)
+    nvpa: NvpaConfig = field(default_factory=NvpaConfig)
+    human: HumanConfig = field(default_factory=HumanConfig)
 
     def validate(self) -> None:
         if self.asr.backend != "sherpa_onnx_offline":
@@ -74,6 +103,10 @@ class EvalConfig:
             raise ValueError("ss.ref_mode must be centroid|mean_cosine")
         if self.wer.aggregation not in ("corpus", "sample_mean"):
             raise ValueError("wer.aggregation must be corpus|sample_mean")
+        if self.nvpa.unreliable_policy not in ("miss", "exclude"):
+            raise ValueError("nvpa.unreliable_policy must be miss|exclude")
+        if self.nvpa.tolerance_words < 0:
+            raise ValueError("nvpa.tolerance_words must be >= 0")
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)

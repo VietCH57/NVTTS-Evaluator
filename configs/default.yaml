@@ -38,3 +38,27 @@ bootstrap:
   alpha: 0.05
   seed: 0
   min_n: 10
+
+nvpa:
+  detector_path: null                   # set to the file written by `train-detector`; enables the nvpa metric
+  tolerance_words: 1                    # [ASSUMPTION] position tolerance (reference words); tune with the shuffle baseline
+  min_window: 0.2
+  max_window: 3.0
+  unreliable_policy: miss               # [ASSUMPTION] events that cannot be localised: miss | exclude
+  shuffle_reps: 50
+
+human:
+  subset_size: 100
+  seed: 0
+  rare_type_share: 0.05
+  max_rare_fraction: 0.5
+  long_utt_seconds: 15.0
+  head_speaker_min_utts: 20
+  n_gt_anchors: 5
+  n_degraded_anchors: 5
+  degrade_snr_db: 5.0
+  anchor_gt_min: 3.0
+  anchor_gap_min: 0.5
+  exclude_flagged: true
+  auto_on_subset: true                  # [ASSUMPTION] final score uses automatic metrics on the rated subset
+

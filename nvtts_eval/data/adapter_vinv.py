@@ -102,6 +102,7 @@ def build_manifest(
     reference_map: Optional[Dict[str, List[str]]] = None,  # sample_id -> paths rel. to root
     speakers: Optional[Sequence[str]] = None,
     parser: Optional[NVParser] = None,
+    with_references: bool = True,           # False: leave reference_audio empty (not needed for NVPA/WER/pMOS)
 ) -> Tuple[Manifest, BuildReport]:
     root = Path(root)
     parser = parser or NVParser()
@@ -119,7 +120,7 @@ def build_manifest(
     utts = [u for u in iter_split(root, split) if wanted is None or u.speaker_id in wanted]
 
     ref_by_speaker: Dict[str, List[str]] = {}
-    if track == "A":
+    if track == "A" and with_references:
         for u in iter_split(root, reference_split):
             ref_by_speaker.setdefault(u.speaker_id, []).append(u.audio_rel)
         for k in ref_by_speaker:
@@ -135,13 +136,15 @@ def build_manifest(
             raise DatasetFormatError(f"duplicate sample_id {sid}")
         seen_ids.add(sid)
 
-        if track == "A":
+        if track == "A" and not with_references:
+            refs = []
+        elif track == "A":
             refs = [r for r in ref_by_speaker.get(u.speaker_id, []) if r != u.audio_rel]
             if max_reference_clips is not None:
                 refs = refs[:max_reference_clips]
         else:
             refs = list(reference_map.get(sid, []))
-        if not refs:
+        if not refs and with_references:
             no_ref.add(u.speaker_id)
 
         gen_rel: Optional[str] = None
@@ -192,11 +195,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ap.add_argument("--source", default="ground_truth", choices=["ground_truth", "model"])
     ap.add_argument("--generated-dir", type=Path)
     ap.add_argument("--max-reference-clips", type=int)
+    ap.add_argument("--reference-map", type=Path,
+                    help="JSON {sample_id: [reference paths relative to --root]}; required for Track B")
+    ap.add_argument("--no-references", action="store_true", help="do not attach reference clips (Track A only)")
     ap.add_argument("--out", required=True, type=Path)
     a = ap.parse_args(argv)
     m, rep = build_manifest(
         a.root, a.split, track=a.track, source=a.source, generated_dir=a.generated_dir,
-        max_reference_clips=a.max_reference_clips,
+        max_reference_clips=a.max_reference_clips, with_references=not a.no_references,
+        reference_map=json.loads(a.reference_map.read_text(encoding="utf-8")) if a.reference_map else None,
     )
     m.save(a.out)
     print(f"wrote {a.out}\n{rep}")

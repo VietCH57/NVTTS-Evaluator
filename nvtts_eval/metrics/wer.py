@@ -15,6 +15,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
+from ..alignment import align, counts
 from ..data.manifest import Manifest
 from ..stats import NAN, bootstrap_ci, bootstrap_ratio_ci, group_stats, macro_mean
 
@@ -37,28 +38,8 @@ def normalize_text(text: str, cfg: TextNormConfig = TextNormConfig()) -> str:
 
 
 def edit_counts(ref: Sequence[str], hyp: Sequence[str]) -> Tuple[int, int, int]:
-    """Minimum edit distance split into (substitutions, deletions, insertions).
-    Ties are broken deterministically (diagonal, then deletion, then insertion)."""
-    n, m = len(ref), len(hyp)
-    table = [list(range(m + 1))]
-    for i in range(1, n + 1):
-        prev, cur = table[-1], [i] + [0] * m
-        for j in range(1, m + 1):
-            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
-            cur[j] = min(prev[j - 1] + cost, prev[j] + 1, cur[j - 1] + 1)
-        table.append(cur)
-    i, j, s, d, ins = n, m, 0, 0, 0
-    while i > 0 or j > 0:
-        if i > 0 and j > 0 and table[i][j] == table[i - 1][j - 1] + (ref[i - 1] != hyp[j - 1]):
-            s += ref[i - 1] != hyp[j - 1]
-            i, j = i - 1, j - 1
-        elif i > 0 and table[i][j] == table[i - 1][j] + 1:
-            d += 1
-            i -= 1
-        else:
-            ins += 1
-            j -= 1
-    return s, d, ins
+    """Minimum edit distance split into (substitutions, deletions, insertions)."""
+    return counts(align(ref, hyp), ref, hyp)
 
 
 def wer_records(manifest: Manifest, asr_records: Sequence[Dict[str, Any]],

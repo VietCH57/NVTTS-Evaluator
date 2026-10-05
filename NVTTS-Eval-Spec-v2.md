@@ -1,10 +1,10 @@
-# ViNV-TTS Evaluation Framework — System Description (v2)
+# ViNV-TTS Evaluation Framework — System Description (v2.1)
 
 You are working on an evaluation codebase for the **Vietnamese Non-Verbal Text-to-Speech for Conversational Synthesis (ViNV-TTS)** shared task (VLSP 2026).
 
 This codebase is for **model development and internal evaluation**. It is NOT a reproduction of the organizers' official evaluator.
 
-This v2 replaces v1. It keeps v1's principles and incorporates (a) facts verified on the released data, (b) corrections to v1, and (c) decisions made since. Section 20 lists what is still undecided.
+This v2.1 replaces v1; sections 1–20 are the v2 design and section 21 records what was built, measured and decided during implementation. It keeps v1's principles and incorporates (a) facts verified on the released data, (b) corrections to v1, and (c) decisions made since. Section 20 lists what is still undecided.
 
 ---
 
@@ -407,3 +407,82 @@ The evaluator should tell the researcher not only how well the model performs bu
 - Local protocol for Track B evaluation: **deferred** (the released dev set has no unseen speakers; all 46 dev speakers are in train).
 - Human-evaluation interface and subset size.
 - Exact normalization the organizers apply to SN, Q, pMOS, SS, WER.
+
+---
+
+## 21. As Built (v2.1)
+
+### 21.1 Checkpoints (all verified end to end on Kaggle, T4, Python 3.13)
+
+- **ASR:** `hynt/Zipformer-30M-RNNT-6000h`, offline transducer, ONNX fp32, run with `sherpa-onnx`. The repo ships no
+  `tokens.txt`; it is generated from `bpe.model` (2000 tokens: `<blk> 0`, `<sos/eos> 1`, `<unk> 2`, ...). Output tokens are
+  upper case (normalisation lower-cases). **Token timestamps are available** (0.04 s grid, onset of each token). Decoding
+  takes about 0.2–0.6 s for 5–14 s clips on CPU. Weights are CC BY-NC-ND 4.0: local use only.
+- **pMOS:** `prj-beatrice/dnsmos-torch-native` (remote code, pin `revision`): outputs `sig`, `bak`, `ovrl`, `p808`; a 24.7 s
+  clip ran without error. `ovrl` is the default pMOS `[ASSUMPTION]`.
+- **Speaker similarity:** `speechbrain/spkrec-ecapa-voxceleb`: 192-d embeddings; probe: same speaker 0.748, different
+  speakers 0.088. Device string must be `cuda:0` (fixed).
+- All models receive mono float32 at 16 kHz from one resampling function (`audio.load_mono`).
+
+### 21.2 Ground-truth calibration of the automatic metrics (dev audio as "model output", Track A)
+
+316 utterances, 46 speakers; reference for SS = first 20 train clips of the speaker (centroid).
+
+| metric | value | 95% CI (utterance) | 95% CI (speaker-cluster) |
+|---|---|---|---|
+| WER (corpus: 414 errors / 15,091 words; S 238, D 133, I 43) | 0.027 | [0.024, 0.031] | [0.022, 0.042] |
+| pMOS, DNSMOS `ovrl` | 3.13 (normalised 0.533) | [3.095, 3.160] | [3.026, 3.186] |
+| SS, cosine | 0.810 (macro-speaker 0.772) | [0.799, 0.820] | [0.758, 0.832] |
+
+Consequences: real speech reaches only 0.533 on normalised pMOS and 0.81 on SS, so these are the practical ceilings.
+Automatic components without NVPA contribute at most 0.15·(1−0.027) + 0.15·0.533 + 0.10·0.810 = **0.307** of 0.40
+(Track A); with NVPA at its own ground-truth level `x`, the ground-truth AutoScore is 0.307 + 0.30·x. The low WER suggests the
+corpus transcripts were produced by an ASR pipeline close to this one, so WER on real speech is a lower bound that a TTS
+system should not be expected to match.
+
+### 21.3 NVPA as built
+
+1. ASR (shared with WER) gives words with token timestamps.
+2. Reference and recognised words are aligned (edit alignment). Each gap between two reference words maps to the window
+   `[onset of the last token of the previous word, onset of the first token of the next word]`
+   (at least 0.2 s, at most 3 s; widened and flagged when a neighbouring word was not recognised; none if nothing aligned).
+3. A window-level detector (one gradient-boosting classifier per NV type on 38 hand-crafted acoustic features,
+   `FEATURE_VERSION 1`) gives per-window presence probabilities. It is trained **only on the train split** (windows from the
+   ASR alignment of ground-truth audio), thresholds are chosen on speaker-grouped out-of-fold F1; dev is never used for
+   training. The detector is replaceable (`predict_windows`, `thresholds`, `nv_types`, `describe`).
+4. Gold events `(type, gap)` are matched one-to-one to detections of the same type within `tolerance_words` (default 1
+   `[ASSUMPTION]`), closest first. Misses are classified: `alignment_unreliable`, `wrong_type`, `wrong_position`, `missing`.
+   Headline NVPA = micro average over events `[ASSUMPTION]`; events that cannot be localised count as misses
+   (`unreliable_policy: miss`, alternative `exclude`); failed samples are excluded and counted.
+5. Reported with it: per type, per position class, macro over types and speakers, detection rate, type accuracy given
+   detection, placement error (words, seconds), spurious NVs per 100 words (not part of the score), bootstrap CIs
+   (utterance and speaker-cluster) and the **random-placement baseline** (gold types kept, positions drawn uniformly, same
+   detections), which must be read next to NVPA.
+6. Checked on synthetic audio (crude artificial NVs in the gaps): NVPA 0.91 against a random-placement baseline of 0.29 and
+   no spurious detections. This verifies the chain, not the detector's quality on real recordings.
+
+Limitations: presence per window only (NV *duration* from spec section 10 is not measured); two same-type events in one gap
+cannot both be matched; timing is the onset grid of the ASR (0.04 s); tags in the corpus are themselves automatic, so the
+detector learns the pipeline's notion of an NV (circularity) and the ground-truth NVPA is below 1.
+
+### 21.4 Human evaluation as built
+
+`human-subset` (deterministic; rare NV types first, then strata head/tail speaker × short/long with sqrt-proportional quotas
+and round-robin over speakers) → `human-export` (anonymous audio names, `rating_sheet.csv`, Vietnamese instructions,
+hidden ground-truth and noise-degraded anchors; `PRIVATE_key.json` stays with the organiser) → `human-import` (one sheet per
+rater; rater id = file name; range checks; anchor check flags a rater whose ground-truth anchors are rated below
+`anchor_gt_min` or less than `anchor_gap_min` above the degraded ones; inter-rater agreement; per-sample means over accepted
+raters). The final score uses the automatic components computed on the rated subset (`auto_on_subset`); full-set values
+are reported separately.
+
+### 21.5 Decisions
+
+Resolved: ASR timing source (token timestamps); DNSMOS output (`ovrl`, configurable); Track A reference rule (centroid of
+train clips, optionally capped); human-evaluation interface (CSV package); detector family (window-level gradient boosting,
+subject to the calibration below).
+
+Still open: quality of the detector on real recordings (decide with the calibration run: out-of-fold precision/recall per
+type and ground-truth NVPA against the random-placement baseline; if weak, replace the feature extractor with a pretrained
+audio encoder behind the same interface); whether the organizers' NVPA is micro or macro; how they normalise SN, Q, pMOS,
+SS; Track B local protocol; adapters for the public/private test formats once released.
+

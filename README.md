@@ -1,49 +1,60 @@
 # nvtts-eval
 
-Single-model evaluator for the ViNV-TTS shared task. Design: `NVTTS-Eval-Spec-v2.md`.
+Single-model evaluator for the ViNV-TTS shared task (VLSP 2026). Design and as-built notes: `NVTTS-Eval-Spec-v2.md`.
 
-## Status
-Phase 1 done (parser, manifest, adapter, scoring, artifact cache, statistics).
-Phase 2 in progress: ASR+WER, pMOS, speaker similarity, summary, CLI are written and tested with
-fake backends; **the real-model wrappers still need to be verified on your machine** with
-`scripts/probe_models.py` (see below).
-Not implemented yet: NVPA (so AutoScore is reported as N/A), human evaluation.
+All components exist: parser/manifest/adapter, WER, pMOS, speaker similarity, NVPA, human-evaluation package,
+final scoring, CLI. Tests: `python -m pytest -q` (147). The three model wrappers and the NVPA detector were verified
+on Kaggle / on synthetic audio; the **NVPA detector has not yet been calibrated on the real corpus** (workflow below).
 
 ## Checkpoints (configurable in `configs/default.yaml`)
 | role | checkpoint | runtime |
 |---|---|---|
-| ASR (WER, token timing for NVPA) | `hynt/Zipformer-30M-RNNT-6000h` (offline transducer, ONNX) | `sherpa-onnx` |
+| ASR (WER, token timing for NVPA) | `hynt/Zipformer-30M-RNNT-6000h` (ONNX) | `sherpa-onnx` |
 | pMOS | `prj-beatrice/dnsmos-torch-native` | `torch` + `transformers` (remote code: pin `revision`) |
-| Speaker similarity | `speechbrain/spkrec-ecapa-voxceleb` (ECAPA-TDNN) | `torch` + `speechbrain` |
+| Speaker similarity | `speechbrain/spkrec-ecapa-voxceleb` | `torch` + `speechbrain` |
 
-The ASR weights are CC BY-NC-ND 4.0: use them locally, do not commit or redistribute them.
-All models receive mono float32 audio resampled to 16 kHz by `nvtts_eval.audio.load_mono`.
+ASR weights are CC BY-NC-ND 4.0: use locally, never commit them. All models get mono float32 at 16 kHz.
 
-## Setup (PowerShell, from this folder)
-    pip install torch                       # or the CUDA build from pytorch.org
-    pip install -e ".[dev,asr,mos,asv]"
+## Setup
+    pip install -e ".[dev,asr,mos,asv,nvpa]"        # install torch first for your CUDA/CPU setup
     python -m pytest -q
+    python scripts/make_tokens.py --bpe <asr dir>/bpe.model --out <asr dir>/tokens.txt     # once; the HF repo has no tokens.txt
+    python scripts/probe_models.py --manifest <manifest> --config <config> --n 3           # checks the three models
 
-Download the ASR files (`encoder-epoch-20-avg-10.onnx`, `decoder-...onnx`, `joiner-...onnx`, `bpe.model`;
-or the `.int8.onnx` variants) into one folder, then create the missing `tokens.txt`:
+## 1. Calibration on the real corpus (do this once; ground-truth audio = "model output")
+    # manifests (dev for evaluation, train for training the detector)
+    python -m nvtts_eval.data.adapter_vinv --root <data> --split dev   --track A --out manifests/dev_gt_A.jsonl
+    python -m nvtts_eval.data.adapter_vinv --root <data> --split train --track A --no-references --out manifests/train_gt.jsonl
 
-    python scripts\make_tokens.py --bpe D:\Work\models\Zipformer-30M-RNNT-6000h\bpe.model --out D:\Work\models\Zipformer-30M-RNNT-6000h\tokens.txt
+    # train the NVPA detector on TRAIN only (runs the ASR over train once; cached in the run dir)
+    python -m nvtts_eval.cli train-detector --manifest manifests/train_gt.jsonl --run-dir runs/train_gt --config <config> --out models/nvpa_gap.joblib
 
-Edit `asr.model_dir` (and `ss.savedir`) in `configs/default.yaml`.
+    # set nvpa.detector_path in the config, then run everything on dev (asr/pmos/ss are reused from cache)
+    python -m nvtts_eval.cli run --manifest manifests/dev_gt_A.jsonl --run-dir runs/gt_dev_A --config <config>
 
-## Verify the real models (do this first)
-    python scripts\probe_models.py --manifest manifests\dev_gt_A.jsonl --config configs\default.yaml --n 3
+Read the result before trusting NVPA: the detector's out-of-fold precision/recall per NV type (printed by
+`train-detector`), the ground-truth NVPA (the practical ceiling), the random-placement baseline printed beneath it, and the
+spurious-NV rate. A detector whose ground-truth NVPA is close to the random-placement baseline cannot rank models.
 
-It checks: ASR transcripts vs references and whether token timestamps exist (NVPA needs them);
-DNSMOS outputs incl. on the longest clip; ECAPA cosine same-speaker vs different-speaker.
+## 2. Evaluate a model
+Put one audio file per sample in a folder, named `<spk_id>_<audio stem>.wav` (e.g. `spk_0000_0001.wav`), then:
 
-## Ground-truth calibration run (dev audio treated as the model output, Track A)
-    python -m nvtts_eval.cli run --manifest manifests\dev_gt_A.jsonl --run-dir runs\gt_dev_A --config configs\default.yaml
-    python -m nvtts_eval.cli summary --manifest manifests\dev_gt_A.jsonl --run-dir runs\gt_dev_A --config configs\default.yaml
+    python -m nvtts_eval.data.adapter_vinv --root <data> --split dev --track A --source model --generated-dir <outputs> --out manifests/mymodel_A.jsonl
+    python -m nvtts_eval.cli run --manifest manifests/mymodel_A.jsonl --run-dir runs/mymodel_A --config <config>
 
-Use `--limit 20` (with its own `--run-dir`) for a quick smoke test. Results are cached per metric;
-unchanged inputs are never recomputed; `--force` recomputes.
+Track B needs `--track B --reference-map refs.json` (`{sample_id: [reference clip paths relative to --root]}`): the released
+data has no unseen speakers. Missing or failed samples are listed as errors and counted, never silently dropped.
+Without human scores the report shows AutoScore (maximum 0.70, not official) and `Final score: N/A`.
 
-## Other commands
-    python -m nvtts_eval.data.adapter_vinv --root <data root> --split dev --track A --out manifests\dev_gt_A.jsonl
-    python scripts\dataset_stats.py --root <data root> --out stats_out
+## 3. Human evaluation (adds SN, Q and the final score)
+    python -m nvtts_eval.cli human-subset --manifest <m> --run-dir <run> [--size 100]
+    python -m nvtts_eval.cli human-export --manifest <m> --run-dir <run> --out <package dir>
+    # give raters ONLY <package dir>/for_raters ; each rater fills a copy of rating_sheet.csv and returns it as <rater>.csv
+    python -m nvtts_eval.cli human-import --manifest <m> --run-dir <run> --package <package dir> --ratings alice.csv bob.csv
+
+Keep `PRIVATE_key.json` away from raters. Raters whose hidden anchors look wrong are flagged and excluded (config).
+
+## Other
+    python -m nvtts_eval.cli summary --manifest <m> --run-dir <run>        # rebuild the report from cached artifacts
+    python scripts/dataset_stats.py --root <data> --out stats_out
+Use `--limit N` with a separate `--run-dir` for smoke tests. `--force` recomputes a metric.

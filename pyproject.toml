@@ -10,9 +10,10 @@ requires-python = ">=3.9"
 dependencies = []          # core (parser, manifest, scoring) is stdlib-only
 
 [project.optional-dependencies]
-dev = ["pytest", "pyyaml", "soundfile", "numpy", "scipy", "sentencepiece"]
+dev = ["pytest", "pyyaml", "soundfile", "numpy", "scipy", "sentencepiece", "scikit-learn", "joblib"]
 audio = ["soundfile", "numpy", "scipy"]
 config = ["pyyaml"]
+nvpa = ["scikit-learn", "joblib"]
 asr = ["sherpa-onnx", "sentencepiece"]
 # torch: install the build matching your CUDA/CPU setup first (https://pytorch.org)
 mos = ["transformers"]

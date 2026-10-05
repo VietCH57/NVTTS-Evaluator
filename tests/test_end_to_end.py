@@ -32,7 +32,7 @@ def test_run_then_cached_rerun_then_summary(tmp_path, monkeypatch, capsys):
     # dev clip is 2 s at 24 kHz -> 2 s after resampling; train refs are 2 s and 3 s
     made = {}
 
-    def fake_build(cfg, names):
+    def fake_build(cfg, names, store=None):
         made["asr"] = FakeASR({2: "xin chào các bạn"})
         made["emb"] = FakeEmbedder({2: [1, 0], 3: [0, 1]})
         all_metrics = {"asr": AsrMetric(made["asr"]), "pmos": PMosMetric(FakeDnsmos()),

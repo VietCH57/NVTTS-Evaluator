@@ -3,10 +3,11 @@
 venv/
 env/
 
-# --- Dataset (large; shared separately, e.g. as a private Kaggle Dataset) ---
+# --- Dataset (large; shared as a private Kaggle Dataset, not through git) ---
 data/vinv-tts
 
-# --- Model weights and caches ---
+# --- Model weights and caches (anchored to the repo root with a leading "/" so that the
+#     source package nvtts_eval/models/ is NOT ignored) ---
 # hynt/Zipformer-30M-RNNT-6000h is CC BY-NC-ND 4.0: never commit or redistribute it.
 /models/
 /pretrained_models/
@@ -15,23 +16,37 @@ data/vinv-tts
 *.pth
 *.ckpt
 *.safetensors
+*.joblib
 bpe.model
 tokens.txt
 .cache/
 huggingface/
 
-# --- Evaluation outputs (regenerate with `python -m nvtts_eval.cli run ...`) ---
+# --- Evaluation outputs: regenerate with `python -m nvtts_eval.cli ...` ---
 runs/
 evaluation_output/
-# Generated manifests hold absolute paths of one machine (e.g. D:/Work/...).
-# Uncomment to stop tracking them; `git rm --cached manifests/*.jsonl` if already committed.
-# manifests/*.jsonl
+human_package*/
+for_raters*/
+# Manifests store absolute paths of the machine that built them (D:/..., /kaggle/...).
+# Rebuild them with adapter_vinv instead of committing them.
+manifests/*.jsonl
 
 # --- Secrets ---
 .env
 .env.*
 *.token
 kaggle.json
+
+# --- Logs and Kaggle output files ---
+*.log
+__notebook__.ipynb
+__results__.html
+__results___files/
+
+# --- Notebooks: keep only the cleaned ones under notebooks/ (no outputs) ---
+*.ipynb
+!notebooks/*.ipynb
+.ipynb_checkpoints/
 
 # --- Python bytecode and caches ---
 __pycache__/
@@ -51,9 +66,6 @@ htmlcov/
 .mypy_cache/
 .pyre/
 .ruff_cache/
-
-# --- Notebooks ---
-.ipynb_checkpoints/
 
 # --- Local editor and OS files ---
 .vscode/
