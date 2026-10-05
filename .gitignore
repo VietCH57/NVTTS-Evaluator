@@ -8,8 +8,8 @@ data/vinv-tts
 
 # --- Model weights and caches ---
 # hynt/Zipformer-30M-RNNT-6000h is CC BY-NC-ND 4.0: never commit or redistribute it.
-models/
-pretrained_models/
+/models/
+/pretrained_models/
 *.onnx
 *.pt
 *.pth
