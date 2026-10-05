@@ -179,3 +179,21 @@ def test_predict_windows_handles_none_windows():
     out = det.predict_windows(_sig("noise"), 16000, [Window(0.1, 0.5, False), None, Window(0.6, 0.9, True)])
     assert out[1] is None and set(out[0]) == set(det.nv_types) and all(0 <= v <= 1 for v in out[2].values())
     assert det.predict_windows(_sig("noise"), 16000, [None, None]) == [None, None]
+
+
+def test_load_warns_on_scikit_learn_version_mismatch(tmp_path):
+    import joblib
+    X, Y, groups = _toy_xy()
+    det = train_gap_detector(X, Y, groups, ("laughter", "breathing", "sniff", "throatclearing"), max_iter=20)
+    path = tmp_path / "d.joblib"
+    det.save(path)
+    d = joblib.load(path)
+    d["sklearn"] = "0.20.0"                                   # pretend it was trained with another version
+    joblib.dump(d, path)
+    with pytest.warns(RuntimeWarning, match="scikit-learn 0.20.0"):
+        GapDetector.load(path)
+    import warnings
+    det.save(path)                                           # same version: no warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        GapDetector.load(path)

@@ -10,6 +10,7 @@ The evaluator only needs `predict_windows` and `thresholds`; any object with tho
 from __future__ import annotations
 
 import hashlib
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -76,6 +77,15 @@ class GapDetector:
     def load(cls, path: Path) -> "GapDetector":
         import joblib
         d = joblib.load(path)
+        try:
+            import sklearn
+            trained, current = d.get("sklearn"), sklearn.__version__
+            if trained and trained.split(".")[:2] != current.split(".")[:2]:
+                warnings.warn(f"detector {Path(path).name} was trained with scikit-learn {trained} but scikit-learn "
+                              f"{current} is installed: predictions may differ. Install scikit-learn=={trained} or retrain.",
+                              RuntimeWarning, stacklevel=2)
+        except ImportError:                                  # pragma: no cover
+            pass
         if d.get("feature_version") != FEATURE_VERSION:
             raise ValueError(f"detector was trained with feature_version {d.get('feature_version')!r}, "
                              f"code is {FEATURE_VERSION!r}; retrain it")
