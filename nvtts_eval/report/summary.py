@@ -20,7 +20,7 @@ from ..metrics.wer import summarize_wer, wer_records
 from ..nvpa.summary import summarize_nvpa
 from ..scoring.formulas import (WEIGHTS, ScoreResult, auto_score, final_score, normalize_mos, normalize_ss,
                                 one_minus_wer)
-from ..stats import bootstrap_ci, describe, group_stats, macro_mean
+from ..stats import bootstrap_ci, describe, group_stats, macro_mean, spearman
 
 
 def _scrub(obj: Any) -> Any:
@@ -146,6 +146,16 @@ def build_summary(manifest: Manifest, store: ArtifactStore, cfg: EvalConfig, nvp
                        "agreement": human.get("agreement"), "subset_size": len(ids),
                        "auto_values_used_for_final": {k: v for k, v in sub_values.items()},
                        "auto_on_subset": cfg.human.auto_on_subset}
+        # validation of the NVPA detector against humans: per-sample NVPA vs the raters' NV_placement score
+        corr = None
+        if store.read_meta("nvpa") is not None:
+            rate = {r["sample_id"]: sum(e["hit"] for e in r["events"]) / len(r["events"])
+                    for r in store.read_records("nvpa") if "error" not in r and r["events"]}
+            pairs = [(rate[r["sample_id"]], r["NV_placement"]) for r in human.get("records", [])
+                     if r.get("NV_placement") is not None and r["sample_id"] in rate]
+            if len(pairs) >= 5:
+                corr = {"spearman": spearman([p[0] for p in pairs], [p[1] for p in pairs]), "n": len(pairs)}
+        human_block["nvpa_vs_human_placement"] = corr
         if sn is not None and q is not None and not sub_missing:
             final = final_score(track, sub_values["NVPA"], sub_values["WER"], sub_values["pMOS"], sub_values["SS"],
                                 sn, q, cfg.scoring)
@@ -213,6 +223,9 @@ def format_summary(s: Dict[str, Any]) -> str:
                      f"SN {f(h['SN']['mean'], 2)}{ci(h['SN'].get('ci_utterance'))}  Q {f(h['Q']['mean'], 2)}{ci(h['Q'].get('ci_utterance'))}"
                      + (f"  NV-nat {f(h['NV_naturalness']['mean'], 2)}" if h.get("NV_naturalness") else "")
                      + (f"  NV-place {f(h['NV_placement']['mean'], 2)}" if h.get("NV_placement") else ""))
+        c = h.get("nvpa_vs_human_placement")
+        if c and c.get("spearman") is not None:
+            lines.append(f"  NVPA vs human NV_placement (per sample): Spearman {c['spearman']:.2f} (n={c['n']})")
         flagged = [r for r, v in h["raters"].items() if v.get("flagged")]
         if flagged:
             lines.append(f"  WARNING: raters flagged by anchor checks: {flagged}")

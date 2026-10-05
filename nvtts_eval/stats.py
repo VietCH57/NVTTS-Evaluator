@@ -171,3 +171,32 @@ def bootstrap_ratio_ci(
         return NAN, NAN
     ratios.sort()
     return percentile(ratios, 100 * alpha / 2), percentile(ratios, 100 * (1 - alpha / 2))
+
+
+def _ranks(x: Sequence[float]) -> List[float]:
+    order = sorted(range(len(x)), key=lambda i: x[i])
+    r = [0.0] * len(x)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and x[order[j + 1]] == x[order[i]]:
+            j += 1
+        for k in range(i, j + 1):
+            r[order[k]] = (i + j) / 2 + 1          # average rank for ties
+        i = j + 1
+    return r
+
+
+def spearman(x: Sequence[float], y: Sequence[float]) -> float:
+    """Spearman rank correlation (NaN if fewer than 3 pairs or no variation)."""
+    if len(x) != len(y):
+        raise ValueError("x and y must have the same length")
+    if len(x) < 3:
+        return NAN
+    rx, ry = _ranks(x), _ranks(y)
+    mx, my = sum(rx) / len(rx), sum(ry) / len(ry)
+    sx = math.sqrt(sum((a - mx) ** 2 for a in rx))
+    sy = math.sqrt(sum((b - my) ** 2 for b in ry))
+    if sx == 0 or sy == 0:
+        return NAN
+    return sum((a - mx) * (b - my) for a, b in zip(rx, ry)) / (sx * sy)

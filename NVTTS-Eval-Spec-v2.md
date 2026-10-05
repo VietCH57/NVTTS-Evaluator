@@ -457,7 +457,9 @@ system should not be expected to match.
 5. Reported with it: per type, per position class, macro over types and speakers, detection rate, type accuracy given
    detection, placement error (words, seconds), spurious NVs per 100 words (not part of the score), bootstrap CIs
    (utterance and speaker-cluster) and the **random-placement baseline** (gold types kept, positions drawn uniformly, same
-   detections), which must be read next to NVPA.
+   detections), which must be read next to NVPA. `nvpa-sweep` re-evaluates a stored artifact under other tolerances and
+   thresholds without running any model, and prints the signed offset between each gold event and the nearest detection of
+   its type.
 6. Checked on synthetic audio (crude artificial NVs in the gaps): NVPA 0.91 against a random-placement baseline of 0.29 and
    no spurious detections. This verifies the chain, not the detector's quality on real recordings.
 
@@ -465,7 +467,41 @@ Limitations: presence per window only (NV *duration* from spec section 10 is not
 cannot both be matched; timing is the onset grid of the ASR (0.04 s); tags in the corpus are themselves automatic, so the
 detector learns the pipeline's notion of an NV (circularity) and the ground-truth NVPA is below 1.
 
-### 21.4 Human evaluation as built
+### 21.4 NVPA calibration on the real corpus (dev ground truth as "model output", Track A, tolerance 1 word)
+
+Detector, speaker-grouped out-of-fold on train (88,363 windows from 1,739 utterances; positives: breathing 3,722,
+laughter 681, sniff 117, throat clearing 115):
+
+| type | threshold | precision | recall | AUC |
+|---|---|---|---|---|
+| breathing | 0.888 | 0.71 | 0.72 | 0.957 |
+| laughter | 0.683 | 0.31 | 0.27 | 0.851 |
+| sniff | 0.542 | 0.22 | 0.42 | 0.951 |
+| throat clearing | 0.498 | 0.14 | 0.15 | 0.907 |
+
+NVPA on dev (316 utterances, 809 gold events):
+
+| quantity | value |
+|---|---|
+| NVPA, micro | **0.729** (95% CI utterance [0.695, 0.762]; speaker-cluster [0.604, 0.775]) |
+| random-placement baseline (same detections) | 0.130 (std 0.014): lift 0.599 |
+| per type | breathing 0.804 (n=674), laughter 0.402 (102), throat clearing 0.263 (19), sniff 0.143 (14) |
+| macro over types / over speakers | 0.403 / 0.573 |
+| detection rate; type accuracy given detection | 0.764; 0.955 |
+| misses | wrong_position 120, missing 70, wrong_type 28, alignment_unreliable 1 |
+| spurious NVs per 100 words | 1.75 |
+| AutoScore of ground truth (Track A) | 0.525 of 0.70 (renormalised 0.751) |
+
+Reading: the chain separates real placement from chance (about 5.6 times the baseline), but (a) breathing is 83% of the events
+and 92% of the hits, so micro NVPA is mostly a breathing score; laughter, sniff and throat clearing are detected poorly
+and sniff / throat clearing have only 14 / 19 dev events, so per-type values must always be read with their `n`;
+(b) **55% of all misses are `wrong_position`**: a detection of the right type exists but lies farther than the tolerance,
+which points to the tolerance, a systematic offset between corpus tags and the window definition, or both; `nvpa-sweep`
+shows which. Because tolerance and threshold changes raise NVPA and the baseline together, they are chosen by the lift.
+The detector was trained on natural speech; whether it transfers to the NV sounds of TTS systems is validated only by
+comparing NVPA with the raters' `NV_placement` scores (the summary reports their Spearman correlation per sample).
+
+### 21.5 Human evaluation as built
 
 `human-subset` (deterministic; rare NV types first, then strata head/tail speaker × short/long with sqrt-proportional quotas
 and round-robin over speakers) → `human-export` (anonymous audio names, `rating_sheet.csv`, Vietnamese instructions,
@@ -475,14 +511,14 @@ rater; rater id = file name; range checks; anchor check flags a rater whose grou
 raters). The final score uses the automatic components computed on the rated subset (`auto_on_subset`); full-set values
 are reported separately.
 
-### 21.5 Decisions
+### 21.6 Decisions
 
 Resolved: ASR timing source (token timestamps); DNSMOS output (`ovrl`, configurable); Track A reference rule (centroid of
 train clips, optionally capped); human-evaluation interface (CSV package); detector family (window-level gradient boosting,
 subject to the calibration below).
 
-Still open: quality of the detector on real recordings (decide with the calibration run: out-of-fold precision/recall per
-type and ground-truth NVPA against the random-placement baseline; if weak, replace the feature extractor with a pretrained
-audio encoder behind the same interface); whether the organizers' NVPA is micro or macro; how they normalise SN, Q, pMOS,
+Still open: choice of tolerance (and optional global threshold scale) from `nvpa-sweep`; detector quality for laughter, sniff
+and throat clearing (if it stays weak, replace the feature extractor with a pretrained audio encoder behind the same interface);
+transfer of the detector to TTS output (human `NV_placement` correlation); whether the organizers' NVPA is micro or macro; how they normalise SN, Q, pMOS,
 SS; Track B local protocol; adapters for the public/private test formats once released.
 

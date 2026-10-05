@@ -3,8 +3,8 @@
 Single-model evaluator for the ViNV-TTS shared task (VLSP 2026). Design and as-built notes: `NVTTS-Eval-Spec-v2.md`.
 
 All components exist: parser/manifest/adapter, WER, pMOS, speaker similarity, NVPA, human-evaluation package,
-final scoring, CLI. Tests: `python -m pytest -q` (147). The three model wrappers and the NVPA detector were verified
-on Kaggle / on synthetic audio; the **NVPA detector has not yet been calibrated on the real corpus** (workflow below).
+final scoring, CLI. Tests: `python -m pytest -q` (154). The three model wrappers, the detector and the full calibration run were verified
+on Kaggle; results are in section 21 of the spec (ground-truth NVPA 0.729 vs a random-placement baseline of 0.130).
 
 ## Checkpoints (configurable in `configs/default.yaml`)
 | role | checkpoint | runtime |
@@ -32,6 +32,10 @@ ASR weights are CC BY-NC-ND 4.0: use locally, never commit them. All models get 
     # set nvpa.detector_path in the config, then run everything on dev (asr/pmos/ss are reused from cache)
     python -m nvtts_eval.cli run --manifest manifests/dev_gt_A.jsonl --run-dir runs/gt_dev_A --config <config>
 
+Then diagnose the tolerance and thresholds without running any model:
+
+    python -m nvtts_eval.cli nvpa-sweep --run-dir runs/gt_dev_A --config <config>
+
 Read the result before trusting NVPA: the detector's out-of-fold precision/recall per NV type (printed by
 `train-detector`), the ground-truth NVPA (the practical ceiling), the random-placement baseline printed beneath it, and the
 spurious-NV rate. A detector whose ground-truth NVPA is close to the random-placement baseline cannot rank models.
@@ -53,6 +57,8 @@ Without human scores the report shows AutoScore (maximum 0.70, not official) and
     python -m nvtts_eval.cli human-import --manifest <m> --run-dir <run> --package <package dir> --ratings alice.csv bob.csv
 
 Keep `PRIVATE_key.json` away from raters. Raters whose hidden anchors look wrong are flagged and excluded (config).
+If raters fill the optional `NV_placement` column, the summary also prints the per-sample Spearman correlation between NVPA and
+that score: the most direct check that the NVPA detector is trustworthy on TTS output.
 
 ## Other
     python -m nvtts_eval.cli summary --manifest <m> --run-dir <run>        # rebuild the report from cached artifacts

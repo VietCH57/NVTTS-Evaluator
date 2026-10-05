@@ -6,6 +6,7 @@
   human-subset     choose the stratified subset that humans will rate
   human-export     write the anonymised rating package (audio + sheet + private key)
   human-import     import rater sheets, check anchors, aggregate, then rewrite the summary
+  nvpa-sweep       re-evaluate NVPA from the stored artifact under other tolerances / thresholds (no models run)
 """
 from __future__ import annotations
 
@@ -163,6 +164,26 @@ def _cmd_human(a, cfg: EvalConfig, manifest: Manifest, store: ArtifactStore) -> 
     return 0
 
 
+def _cmd_nvpa_sweep(a, cfg: EvalConfig) -> int:
+    from .nvpa.sweep import format_sweep, sweep
+
+    store = ArtifactStore(a.run_dir)
+    meta = store.read_meta("nvpa")
+    if meta is None:
+        raise SystemExit("no nvpa artifact in this run dir: run the nvpa metric first")
+    thr = meta.config.get("detector", {}).get("thresholds")
+    if not thr:
+        raise SystemExit("the nvpa artifact does not record detector thresholds")
+    res = sweep(store.read_records("nvpa"), thr, a.tolerances, a.scales, cfg.nvpa.unreliable_policy, a.reps,
+                cfg.bootstrap.seed)
+    (a.run_dir / "nvpa_sweep.json").write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    print(f"artifact used tolerance={meta.config.get('params', {}).get('tolerance_words')} "
+          f"thresholds={thr}\n")
+    print(format_sweep(res))
+    print(f"\nwrote {a.run_dir / 'nvpa_sweep.json'}")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -170,6 +191,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         pass
     ap = argparse.ArgumentParser(prog="nvtts_eval")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sw = sub.add_parser("nvpa-sweep")
+    sw.add_argument("--run-dir", required=True, type=Path)
+    sw.add_argument("--config", type=Path)
+    sw.add_argument("--tolerances", nargs="+", type=int, default=[0, 1, 2, 3])
+    sw.add_argument("--scales", nargs="+", type=float, default=[0.5, 0.75, 1.0, 1.25])
+    sw.add_argument("--reps", type=int, default=20, help="shuffle repetitions per setting")
     for name in ("run", "summary", "train-detector", "human-subset", "human-export", "human-import"):
         p = sub.add_parser(name)
         p.add_argument("--manifest", required=True, type=Path)
@@ -193,6 +220,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     a = ap.parse_args(argv)
 
     cfg = load_config(a.config)
+    if a.cmd == "nvpa-sweep":
+        return _cmd_nvpa_sweep(a, cfg)
     a.run_dir.mkdir(parents=True, exist_ok=True)
     if a.cmd == "train-detector":
         return _cmd_train_detector(a, cfg)
