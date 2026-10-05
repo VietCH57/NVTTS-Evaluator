@@ -39,7 +39,6 @@ kaggle.json
 
 # --- Logs and Kaggle output files ---
 *.log
-__notebook__.ipynb
 __results__.html
 __results___files/
 
