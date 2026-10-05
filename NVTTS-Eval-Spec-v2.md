@@ -513,15 +513,27 @@ Spurious NVs per 100 words: 1.75 at scale 1.0, 4.9 at 0.75, 9.3 at 0.5 (gold NV 
 breathing (threshold capped at 1) and is not meaningful. Signed offset of the nearest same-type detection (scale 1, in words): 0: 534,
 +1: 55, +2: 8, +3: 4, +4: 8, +5: 5, −1: 1, −2: 2, −3: 1, −4: 3, −5: 1, none within ±5: 187.
 
-Reading: (a) lift falls as the tolerance widens (tol 1 to 2 gains 0.007 NVPA and loses 0.06 lift), so tolerances above 1 are not
-justified; (b) detections that miss the exact gap are almost always one gap **late** (55 against 1 early), so a symmetric ±1 pays for an
-early side that the data does not support: the asymmetric tolerance `0:1` keeps the 55 hits and should have a lower random baseline;
-(c) the trained thresholds (chosen for window-level F1) are too strict for a recall-type metric: ×0.75 raises the lift from 0.598 to
-0.662 at tolerance 1. Candidate operating point: tolerance `0:1`, threshold scale 0.75 (to be confirmed with
-`nvpa-sweep --tolerances 0 1 0:1 1:0 --scales 0.5 0.75 1.0`). Whether the late bias belongs to the corpus tags or to the window definition
-cannot be told from ground truth alone; for TTS output it is checked by the human `NV_placement` correlation. If all rare types
-(laughter, sniff, throat clearing) were detected perfectly, NVPA at scale 0.75 could rise by at most about 0.08 (0.854 to 0.94),
-so detector improvement matters less than validating the detector on TTS output.
+Second sweep with asymmetric tolerances (`before:after`; NVPA / random placement / lift):
+
+| scale | `0` | `1` (±1) | `0:1` (late only) | `1:0` (early only) | `2` |
+|---|---|---|---|---|---|
+| 0.50 | 0.818 / 0.098 / 0.720 | 0.906 / 0.247 / 0.659 | 0.904 / 0.180 / **0.723** | 0.828 / 0.172 / 0.656 | 0.916 / 0.359 / 0.557 |
+| 0.75 | 0.773 / 0.071 / 0.702 | 0.854 / 0.192 / 0.662 | 0.850 / 0.136 / **0.714** | 0.778 / 0.131 / 0.647 | 0.865 / 0.285 / 0.580 |
+| 1.00 | 0.660 / 0.044 / 0.616 | 0.728 / 0.130 / 0.598 | 0.727 / 0.089 / **0.637** | 0.661 / 0.087 / 0.574 | 0.735 / 0.203 / 0.532 |
+
+Reading: (a) lift falls as the tolerance widens (±1 to ±2 gains 0.007 NVPA and loses 0.06 lift), so tolerances above 1 are not justified;
+(b) detections that miss the exact gap are almost always one gap **late** (55 against 1 early): `1:0` equals tolerance 0 (0.661 against
+0.660), while `0:1` keeps the 55 hits (0.727 against 0.728) with a much lower random baseline (0.089 against 0.130); (c) the trained
+thresholds (chosen for window-level F1) are too strict for a recall-type metric.
+
+**Decision (operating point):** tolerance `0:1` (a detection may be one gap later than the gold gap, never earlier) and threshold
+scale 0.75: NVPA 0.850, random placement 0.136, lift 0.714, 4.93 spurious NVs per 100 words (gold density 5.4); per type breathing 0.924,
+laughter 0.529, sniff 0.357 (n=14), throat clearing 0.316 (n=19). Scale 0.5 has a lift only 0.009 higher but doubles the spurious rate
+(9.3 per 100 words). The two parameters were chosen on the same dev data they are reported on (809 events, two global knobs), so the ceiling
+is slightly optimistic. At this point about half of all detections are spurious (about 4.6 hits against 4.9 spurious NVs per 100 words);
+NVPA does not penalise them, so the spurious rate and the "tolerance check" line of the report must be read with it.
+Whether the late bias belongs to the corpus tags or to the window definition cannot be told from ground truth; for TTS output it is
+checked with the human `NV_placement` correlation. If all rare types were detected perfectly, NVPA could rise by at most about 0.08.
 
 ### 21.5 Human evaluation as built
 
@@ -535,11 +547,11 @@ are reported separately.
 
 ### 21.6 Decisions
 
-Resolved: ASR timing source (token timestamps); DNSMOS output (`ovrl`, configurable); Track A reference rule (centroid of
+Resolved: NVPA operating point (tolerance `0:1`, threshold scale 0.75, section 21.4); ASR timing source (token timestamps); DNSMOS output (`ovrl`, configurable); Track A reference rule (centroid of
 train clips, optionally capped); human-evaluation interface (CSV package); detector family (window-level gradient boosting,
 subject to the calibration below).
 
-Still open: confirming tolerance `0:1` and threshold scale 0.75 with a second `nvpa-sweep`; detector quality for laughter, sniff
+Still open: whether the late bias and the thresholds transfer to TTS output (human `NV_placement` correlation); detector quality for laughter, sniff
 and throat clearing (if it stays weak, replace the feature extractor with a pretrained audio encoder behind the same interface);
 transfer of the detector to TTS output (human `NV_placement` correlation); whether the organizers' NVPA is micro or macro; how they normalise SN, Q, pMOS,
 SS; Track B local protocol; adapters for the public/private test formats once released.

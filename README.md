@@ -38,7 +38,8 @@ Then diagnose the tolerance and thresholds without running any model:
 
 Tolerances are `n` (symmetric ±n words) or `before:after` (`0:1` = a detection may be one word later, never earlier). Pick the row
 with a high **lift** (NVPA minus random placement) and an acceptable spurious rate, then set `nvpa.tolerance_before/after` and
-`nvpa.threshold_scale` in the config (cached NVPA results are recomputed automatically).
+`nvpa.threshold_scale` in the config (cached NVPA results are recomputed automatically). `configs/default.yaml` already carries the
+calibrated point (`0:1`, scale 0.75); re-run the sweep if you retrain the detector.
 
 Read the result before trusting NVPA: the detector's out-of-fold precision/recall per NV type (printed by
 `train-detector`), the ground-truth NVPA (the practical ceiling), the random-placement baseline printed beneath it, and the
