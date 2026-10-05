@@ -1,6 +1,6 @@
 # nvtts-eval
 
-**English** · [Tiếng Việt](#tiếng-việt)
+**English** · [Tiếng Việt](#tiếng-việt) · [Linux](#linux)
 
 ---
 
@@ -165,3 +165,78 @@ giọng tổng hợp. Điểm cuối dùng các chỉ số tự động tính tr
     configs/ scripts/ notebooks/ tests/ (160 test: python -m pytest -q)
 Trọng số ASR theo giấy phép CC BY-NC-ND 4.0: chỉ dùng cục bộ, không commit. DNSMOS nạp code từ xa (`trust_remote_code`): nên ghim `pmos.revision`.
 Chưa có: adapter cho định dạng public/private test của ban tổ chức (chưa công bố), quy trình Track B cục bộ.
+
+# Linux
+
+Quy ước: dữ liệu, model và checkpoint nằm dưới `/data`.
+
+## 1. Môi trường
+
+Cần Python ≥ 3.9, `git` và `libsndfile1` (để đọc FLAC).
+
+```bash
+sudo apt install -y libsndfile1 git
+git clone https://github.com/VietCH57/NVTTS-Evaluator.git && cd NVTTS-Evaluator
+python3 -m venv .venv && source .venv/bin/activate
+pip install torch                       # có GPU: cài bản CUDA khớp driver (pytorch.org); không có GPU vẫn chạy được
+pip install -e ".[audio,config,asr,mos,asv,nvpa]"
+pip install scikit-learn==1.6.1         # khớp phiên bản lúc huấn luyện detector, tránh cảnh báo và sai lệch
+```
+
+## 2. Đưa dữ liệu và checkpoint lên server
+
+| Thành phần | Đường dẫn ví dụ | Ghi chú |
+|---|---|---|
+| Dữ liệu | `/data/vinv-tts/{train,dev}` | Cần cả hai: `dev` cho văn bản, `train` cho clip tham chiếu của SS |
+| Checkpoint | `/data/ckpt/` | Chứa `nvpa_gap.joblib` và `summary.json` |
+| Output của model | `/data/outputs/mymodel/` | Mỗi mẫu một file `<spk_id>_<tên file audio>.wav`, ví dụ `spk_0000_0001.wav` |
+
+## 3. Tải ASR (một lần)
+
+```bash
+python - <<'EOF'
+from huggingface_hub import snapshot_download
+snapshot_download("hynt/Zipformer-30M-RNNT-6000h",
+    allow_patterns=["encoder-epoch-20-avg-10.onnx", "decoder-epoch-20-avg-10.onnx",
+                    "joiner-epoch-20-avg-10.onnx", "bpe.model"],
+    local_dir="/data/models/Zipformer-30M-RNNT-6000h")
+EOF
+python scripts/make_tokens.py \
+    --bpe /data/models/Zipformer-30M-RNNT-6000h/bpe.model \
+    --out /data/models/Zipformer-30M-RNNT-6000h/tokens.txt
+```
+
+## 4. Tạo cấu hình từ checkpoint
+
+Cấu hình được sao từ `summary.json` của lần chạy giọng thật (chuẩn hóa, dung sai, ngưỡng), chỉ đổi đường dẫn. Nhờ vậy kết quả model so sánh được với mức tối đa của giọng thật.
+
+```bash
+python - <<'EOF'
+import json, yaml
+cfg = json.load(open("/data/ckpt/summary.json"))["active_assumptions"]
+cfg["asr"]["model_dir"] = "/data/models/Zipformer-30M-RNNT-6000h"
+cfg["ss"]["savedir"] = "/data/models/spkrec-ecapa-voxceleb"
+cfg["nvpa"]["detector_path"] = "/data/ckpt/nvpa_gap.joblib"
+yaml.safe_dump(cfg, open("/data/eval.yaml", "w"), sort_keys=False)
+EOF
+```
+
+## 5. Chạy
+
+```bash
+python -m nvtts_eval.data.adapter_vinv --root /data/vinv-tts --split dev --track A --source model \
+    --generated-dir /data/outputs/mymodel --out manifests/mymodel_A.jsonl
+
+nohup python -m nvtts_eval.cli run --manifest manifests/mymodel_A.jsonl \
+    --run-dir runs/mymodel_A --config /data/eval.yaml > run.log 2>&1 &
+```
+
+- Kết quả được cache theo từng chỉ số: chạy lại sẽ tiếp tục, không tính lại phần đã xong.
+- Báo cáo nằm ở `runs/mymodel_A/summary.json`.
+- Xem lại báo cáo sau đó: chạy lệnh `summary` với cùng `--manifest`, `--run-dir`, `--config`.
+
+## Lưu ý
+
+- **Server không có internet.** DNSMOS (kèm code từ xa) và ECAPA tự tải từ Hugging Face ở lần chạy đầu. Chạy một lần trên máy có mạng, rồi chép `~/.cache/huggingface` và `/data/models/spkrec-ecapa-voxceleb` sang server và đặt `export HF_HUB_OFFLINE=1`. Nên ghim `pmos.revision` vào một commit cụ thể, sau khi đã đọc code của repo DNSMOS.
+- **Tốc độ.** ASR luôn chạy trên CPU: tăng `asr.num_threads` trong YAML nếu server có nhiều lõi. GPU chỉ tăng tốc DNSMOS và ECAPA.
+- **Chạy nhiều lần cùng lúc.** Mỗi lần dùng một `--run-dir` riêng, không chia sẻ thư mục.
