@@ -151,7 +151,7 @@ def test_train_detector_then_run_nvpa(tmp_path, monkeypatch, capsys):
                      "--metrics", "nvpa", "asr"]) == 0                         # order given reversed: asr must still go first
     out = capsys.readouterr().out
     assert out.index("asr: computed") < out.index("nvpa: computed")
-    assert "NVPA (micro, tol=1 word)" in out and "random-placement baseline" in out
+    assert "NVPA (micro, tol=±1 word" in out and "random-placement baseline" in out and "tolerance check" in out
     s = json.loads((run / "summary.json").read_text(encoding="utf-8"))
     n = s["automatic_metrics"]["nvpa"]
     assert n["n_events"] == 8 and 0.0 <= s["automatic_metrics"]["nvpa"]["value"] <= 1.0

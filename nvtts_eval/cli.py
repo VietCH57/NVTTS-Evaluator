@@ -54,7 +54,10 @@ def build_metrics(cfg: EvalConfig, names: Sequence[str], store: Optional[Artifac
             if not cfg.nvpa.detector_path:
                 raise ValueError("config nvpa.detector_path is required (train one with `train-detector`)")
             out[n] = NvpaMetric(store, GapDetector.load(Path(cfg.nvpa.detector_path)), cfg.text_norm,
-                                NvpaParams(cfg.nvpa.tolerance_words, cfg.nvpa.min_window, cfg.nvpa.max_window))
+                                NvpaParams(tolerance_words=cfg.nvpa.tolerance_words, min_window=cfg.nvpa.min_window,
+                                       max_window=cfg.nvpa.max_window, tolerance_before=cfg.nvpa.tolerance_before,
+                                       tolerance_after=cfg.nvpa.tolerance_after,
+                                       threshold_scale=cfg.nvpa.threshold_scale))
         else:
             raise ValueError(f"unknown metric {n!r}; choose from {ALL_METRICS}")
     return out
@@ -174,11 +177,11 @@ def _cmd_nvpa_sweep(a, cfg: EvalConfig) -> int:
     thr = meta.config.get("detector", {}).get("thresholds")
     if not thr:
         raise SystemExit("the nvpa artifact does not record detector thresholds")
-    res = sweep(store.read_records("nvpa"), thr, a.tolerances, a.scales, cfg.nvpa.unreliable_policy, a.reps,
+    tols = [tuple(int(x) for x in t.split(":")) if ":" in t else int(t) for t in a.tolerances]
+    res = sweep(store.read_records("nvpa"), thr, tols, a.scales, cfg.nvpa.unreliable_policy, a.reps,
                 cfg.bootstrap.seed)
     (a.run_dir / "nvpa_sweep.json").write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    print(f"artifact used tolerance={meta.config.get('params', {}).get('tolerance_words')} "
-          f"thresholds={thr}\n")
+    print(f"artifact used params={meta.config.get('params')}  base thresholds={thr}\n")
     print(format_sweep(res))
     print(f"\nwrote {a.run_dir / 'nvpa_sweep.json'}")
     return 0
@@ -194,7 +197,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sw = sub.add_parser("nvpa-sweep")
     sw.add_argument("--run-dir", required=True, type=Path)
     sw.add_argument("--config", type=Path)
-    sw.add_argument("--tolerances", nargs="+", type=int, default=[0, 1, 2, 3])
+    sw.add_argument("--tolerances", nargs="+", default=["0", "1", "2", "3"],
+                    help="n (symmetric) or before:after, e.g. 0 1 0:1 2")
     sw.add_argument("--scales", nargs="+", type=float, default=[0.5, 0.75, 1.0, 1.25])
     sw.add_argument("--reps", type=int, default=20, help="shuffle repetitions per setting")
     for name in ("run", "summary", "train-detector", "human-subset", "human-export", "human-import"):

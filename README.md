@@ -3,7 +3,7 @@
 Single-model evaluator for the ViNV-TTS shared task (VLSP 2026). Design and as-built notes: `NVTTS-Eval-Spec-v2.md`.
 
 All components exist: parser/manifest/adapter, WER, pMOS, speaker similarity, NVPA, human-evaluation package,
-final scoring, CLI. Tests: `python -m pytest -q` (154). The three model wrappers, the detector and the full calibration run were verified
+final scoring, CLI. Tests: `python -m pytest -q` (159). The three model wrappers, the detector and the full calibration run were verified
 on Kaggle; results are in section 21 of the spec (ground-truth NVPA 0.729 vs a random-placement baseline of 0.130).
 
 ## Checkpoints (configurable in `configs/default.yaml`)
@@ -34,7 +34,11 @@ ASR weights are CC BY-NC-ND 4.0: use locally, never commit them. All models get 
 
 Then diagnose the tolerance and thresholds without running any model:
 
-    python -m nvtts_eval.cli nvpa-sweep --run-dir runs/gt_dev_A --config <config>
+    python -m nvtts_eval.cli nvpa-sweep --run-dir runs/gt_dev_A --config <config> --tolerances 0 1 0:1 1:0 2 --scales 0.5 0.75 1.0
+
+Tolerances are `n` (symmetric ±n words) or `before:after` (`0:1` = a detection may be one word later, never earlier). Pick the row
+with a high **lift** (NVPA minus random placement) and an acceptable spurious rate, then set `nvpa.tolerance_before/after` and
+`nvpa.threshold_scale` in the config (cached NVPA results are recomputed automatically).
 
 Read the result before trusting NVPA: the detector's out-of-fold precision/recall per NV type (printed by
 `train-detector`), the ground-truth NVPA (the practical ceiling), the random-placement baseline printed beneath it, and the

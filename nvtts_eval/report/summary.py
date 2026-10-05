@@ -17,7 +17,9 @@ from ..config import EvalConfig
 from ..core.artifacts import ArtifactStore
 from ..data.manifest import Manifest
 from ..metrics.wer import summarize_wer, wer_records
-from ..nvpa.summary import summarize_nvpa
+from ..nvpa.matching import effective_tolerance, tolerance_label
+from ..nvpa.summary import shuffle_baseline, summarize_nvpa
+from ..nvpa.sweep import evaluate
 from ..scoring.formulas import (WEIGHTS, ScoreResult, auto_score, final_score, normalize_mos, normalize_ss,
                                 one_minus_wer)
 from ..stats import bootstrap_ci, describe, group_stats, macro_mean, spearman
@@ -93,9 +95,18 @@ def automatic_metrics(manifest: Manifest, store: ArtifactStore, cfg: EvalConfig,
     meta = store.read_meta("nvpa")
     if meta is not None:
         params = meta.config.get("params", {})
-        n = summarize_nvpa(_filter(store.read_records("nvpa"), set(speaker_of)), speaker_of,
-                           params.get("tolerance_words", cfg.nvpa.tolerance_words), cfg.nvpa.unreliable_policy,
+        tol = effective_tolerance({"tolerance_words": cfg.nvpa.tolerance_words, **params})
+        nrecs = _filter(store.read_records("nvpa"), set(speaker_of))
+        n = summarize_nvpa(nrecs, speaker_of, tol, cfg.nvpa.unreliable_policy,
                            b.n_boot, b.alpha, b.seed, b.min_n, cfg.nvpa.shuffle_reps)
+        # robustness: the same detections under a strict, the chosen and a loose tolerance (NVPA vs random placement)
+        checks = []
+        for t in dict.fromkeys([(0, 0), tol, (2, 2)]):
+            ev = evaluate([r for r in nrecs if "error" not in r], t, cfg.nvpa.unreliable_policy)
+            sb = shuffle_baseline(nrecs, t, min(cfg.nvpa.shuffle_reps, 20), b.seed, cfg.nvpa.unreliable_policy)
+            checks.append({"tolerance": tolerance_label(t), "nvpa": ev["nvpa"], "random": sb.get("mean")})
+        n["tolerance_check"] = checks
+        n["threshold_scale"] = params.get("threshold_scale", 1.0)
         det = meta.config.get("detector", {})
         n["detector"] = {"backend": det.get("backend"), "thresholds": det.get("thresholds"),
                          "training": det.get("train")}
@@ -188,7 +199,8 @@ def format_summary(s: Dict[str, Any]) -> str:
              f"{s['data_counts']['n_speakers']} speakers | source={s['data_counts']['manifest_source']}"]
     if "nvpa" in m:
         n = m["nvpa"]
-        lines.append(f"NVPA (micro, tol={n['tolerance_words']} word): {f(n['value'])}  95% CI utt{ci(n['ci_utterance'])} "
+        tl = f"±{n['tolerance_before']}" if n["tolerance_before"] == n["tolerance_after"] else f"-{n['tolerance_before']}/+{n['tolerance_after']}"
+        lines.append(f"NVPA (micro, tol={tl} word, threshold x{n.get('threshold_scale', 1.0):g}): {f(n['value'])}  95% CI utt{ci(n['ci_utterance'])} "
                      f"spk{ci(n['ci_speaker'])}  [{n['n_hits']}/{n['n_events']} events; failed samples={n['n_failed']}]")
         lines.append("  per type: " + "  ".join(f"{t.strip('[]')}={f(v['mean'])} (n={v['n']}{', LOW n' if v['low_n'] else ''})"
                                                  for t, v in n["by_type"].items()))
@@ -196,6 +208,9 @@ def format_summary(s: Dict[str, Any]) -> str:
         lines.append(f"  macro-type={f(n['macro_type'])} macro-speaker={f(n['macro_speaker'])}  "
                      f"detection={f(n['detection_rate'])} type-acc|detected={f(n['type_accuracy_given_detected'])}  "
                      f"misses={ {k: v for k, v in n['reasons'].items() if k != 'ok'} }")
+        if n.get("tolerance_check"):
+            lines.append("  tolerance check (NVPA / random placement): " + "  ".join(
+                f"tol {c['tolerance']}: {f(c['nvpa'])}/{f(c['random'])}" for c in n["tolerance_check"]))
         lines.append(f"  random-placement baseline at this tolerance: {f(sh.get('mean'))} (std {f(sh.get('std'))})  "
                      f"spurious NVs/100 words: {f(n['spurious_per_100_words'], 2)}")
     if "wer" in m:

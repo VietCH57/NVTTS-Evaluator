@@ -41,7 +41,12 @@ bootstrap:
 
 nvpa:
   detector_path: null                   # set to the file written by `train-detector`; enables the nvpa metric
-  tolerance_words: 1                    # [ASSUMPTION] position tolerance (reference words); tune with the shuffle baseline
+  tolerance_words: 1                    # [ASSUMPTION] symmetric position tolerance (reference words); tune with nvpa-sweep
+  # Optional asymmetric override. On the dev ground truth detections were one gap LATE 55 times and one gap EARLY once,
+  # so `before: 0, after: 1` is the candidate to confirm with `nvpa-sweep --tolerances 0 1 0:1 1:0`.
+  # tolerance_before: 0
+  # tolerance_after: 1
+  # threshold_scale: 0.75               # [ASSUMPTION] multiplies the trained thresholds; 0.75 maximised the lift at tolerance 1
   min_window: 0.2
   max_window: 3.0
   unreliable_policy: miss               # [ASSUMPTION] events that cannot be localised: miss | exclude

@@ -16,9 +16,29 @@ sniff + breathing).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 Gold = Tuple[str, int]                 # (type, normalised gap)
+Tolerance = Union[int, Tuple[int, int]]  # n = symmetric +-n gaps; (before, after) = detection may be `before` gaps earlier / `after` later
+
+
+def tolerance_bounds(tol: Tolerance) -> Tuple[int, int]:
+    before, after = (tol, tol) if isinstance(tol, int) else tol
+    if before < 0 or after < 0:
+        raise ValueError("tolerance must be >= 0")
+    return before, after
+
+
+def tolerance_label(tol: Tolerance) -> str:
+    b, a = tolerance_bounds(tol)
+    return f"{b}" if b == a else f"{b}:{a}"
+
+
+def effective_tolerance(params: Dict[str, object]) -> Tuple[int, int]:
+    """(before, after) from NvpaParams-like settings: tolerance_before/after override the symmetric tolerance_words."""
+    sym = int(params.get("tolerance_words", 1))
+    b, a = params.get("tolerance_before"), params.get("tolerance_after")
+    return (sym if b is None else int(b), sym if a is None else int(a))
 
 
 @dataclass
@@ -37,13 +57,18 @@ def match_events(
     pred: Dict[int, Set[str]],
     probs: Dict[int, Dict[str, float]],
     valid_gaps: Set[int],
-    tolerance: int,
+    tolerance: Tolerance,
 ) -> Tuple[List[EventResult], List[Tuple[str, int]]]:
     """Return (one result per gold event, unmatched detections = spurious)."""
+    before, after = tolerance_bounds(tolerance)
+
+    def within(d: int) -> bool:
+        return -before <= d <= after
+
     cands = []
     for e, (t, g) in enumerate(gold):
         for g2, types in pred.items():
-            if t in types and abs(g2 - g) <= tolerance:
+            if t in types and within(g2 - g):
                 cands.append((abs(g2 - g), -probs.get(g2, {}).get(t, 0.0), e, g2))
     cands.sort()
     used_event: Dict[int, int] = {}
@@ -61,8 +86,8 @@ def match_events(
             g2 = used_event[e]
             results.append(EventResult(t, g, True, "ok", g2, g2 - g, probs.get(g2, {}).get(t)))
             continue
-        near_other = any(t2 != t and abs(g2 - g) <= tolerance for g2, types in pred.items() for t2 in types)
-        far_same = any(t in types and abs(g2 - g) > tolerance for g2, types in pred.items())
+        near_other = any(t2 != t and within(g2 - g) for g2, types in pred.items() for t2 in types)
+        far_same = any(t in types and not within(g2 - g) for g2, types in pred.items())
         if g not in valid_gaps and not near_other:
             reason = "alignment_unreliable"
         elif near_other:

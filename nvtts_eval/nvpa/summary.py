@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Sequence
 
 from ..stats import NAN, bootstrap_ci, bootstrap_ratio_ci, group_stats
-from .matching import match_events
+from .matching import Tolerance, match_events, tolerance_bounds, tolerance_label
 
 
 def _flatten(records, speaker_of, policy):
@@ -28,7 +28,7 @@ def _pos_class(e) -> str:
     return "start" if e["gap"] == 0 else "end" if e["gap"] >= e["n_ref_words"] else "mid"
 
 
-def shuffle_baseline(records: Sequence[Dict[str, Any]], tolerance: int, n_reps: int = 50, seed: int = 0,
+def shuffle_baseline(records: Sequence[Dict[str, Any]], tolerance: Tolerance, n_reps: int = 50, seed: int = 0,
                      policy: str = "miss") -> Dict[str, Any]:
     """NVPA obtained when each utterance's gold events keep their types but get uniformly random gaps,
     against the SAME detections. This is the score a position-blind system could reach by chance
@@ -60,7 +60,7 @@ def shuffle_baseline(records: Sequence[Dict[str, Any]], tolerance: int, n_reps: 
     return {"n_reps": len(vals), "mean": mean, "std": std, "min": min(vals, default=NAN), "max": max(vals, default=NAN)}
 
 
-def summarize_nvpa(records: Sequence[Dict[str, Any]], speaker_of: Dict[str, str], tolerance: int,
+def summarize_nvpa(records: Sequence[Dict[str, Any]], speaker_of: Dict[str, str], tolerance: Tolerance,
                    policy: str = "miss", n_boot: int = 2000, alpha: float = 0.05, seed: int = 0,
                    min_n: int = 10, shuffle_reps: int = 50) -> Dict[str, Any]:
     ok = [r for r in records if "error" not in r]
@@ -102,7 +102,8 @@ def summarize_nvpa(records: Sequence[Dict[str, Any]], speaker_of: Dict[str, str]
     return {
         "value": hits / n if n else NAN,
         "definition": "micro: realised gold NV events / gold NV events",
-        "unreliable_policy": policy, "tolerance_words": tolerance,
+        "unreliable_policy": policy, "tolerance": tolerance_label(tolerance),
+        "tolerance_before": tolerance_bounds(tolerance)[0], "tolerance_after": tolerance_bounds(tolerance)[1],
         "n_events": n, "n_hits": hits, "n_samples": len(ok), "n_failed": len(records) - len(ok),
         "n_no_timing_samples": sum(1 for r in ok if r.get("no_timing")),
         "ci_utterance": bootstrap_ratio_ci(nums, dens, **kw),

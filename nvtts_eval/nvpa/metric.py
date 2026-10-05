@@ -12,16 +12,23 @@ from ..core.metric import Metric, Needs
 from ..data.manifest import Manifest, Sample
 from ..data.nv_parser import NVParser
 from ..metrics.wer import TextNormConfig, normalize_text
-from .matching import EventResult, match_events
+from .matching import EventResult, effective_tolerance, match_events
 from .timing import hyp_words_from_asr
 from .windows import Window, build_gap_windows, norm_gap_map, ref_to_hyp_map
 
 
 @dataclass(frozen=True)
 class NvpaParams:
-    tolerance_words: int = 1        # [ASSUMPTION] position tolerance in reference words; tune with the shuffle baseline
+    tolerance_words: int = 1        # [ASSUMPTION] symmetric position tolerance in reference words; tune with nvpa-sweep
     min_window: float = 0.2
     max_window: float = 3.0
+    tolerance_before: Optional[int] = None   # override: how many gaps EARLIER than the gold gap a detection may be
+    tolerance_after: Optional[int] = None    # override: how many gaps LATER
+    threshold_scale: float = 1.0    # [ASSUMPTION] multiplies every enabled detector threshold (calibrate with nvpa-sweep)
+
+    @property
+    def tolerance(self):
+        return effective_tolerance(asdict(self))
 
 
 class NvpaMetric(Metric):
@@ -74,9 +81,11 @@ class NvpaMetric(Metric):
         wav, sr = load_mono(manifest.resolve_generated(sample), 16000)
         gp = self.detector.predict_windows(wav, sr, windows)
         probs = {g: p for g, p in enumerate(gp) if p is not None}
-        pred = {g: {t for t, v in p.items() if v >= self.detector.thresholds.get(t, 1.01)} for g, p in probs.items()}
+        scale = self.params.threshold_scale
+        thr = {t: (v if v > 1.0 else min(v * scale, 1.0)) for t, v in self.detector.thresholds.items()}    # disabled types (>1) stay disabled
+        pred = {g: {t for t, v in p.items() if v >= thr.get(t, 1.01)} for g, p in probs.items()}
         pred = {g: ts for g, ts in pred.items() if ts}
-        results, spurious = match_events(gold, pred, probs, set(probs), self.params.tolerance_words)
+        results, spurious = match_events(gold, pred, probs, set(probs), self.params.tolerance)
 
         events = []
         for r in results:

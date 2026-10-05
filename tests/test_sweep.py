@@ -62,7 +62,7 @@ def test_sweep_grid_monotonic_and_lift():
     recs = [rec("a"), rec("b", events=(("breathing", 6), ("laughter", 13)))]
     res = sweep(recs, THR, tolerances=(0, 1, 2), scales=(0.3, 1.0), reps=10, seed=1)
     assert len(res["rows"]) == 6
-    by = {(r["scale"], r["tolerance"]): r for r in res["rows"]}
+    by = {(r["scale"], int(r["tolerance"])): r for r in res["rows"]}
     assert by[(1.0, 0)]["nvpa"] == 0.5 and by[(1.0, 1)]["nvpa"] == 1.0           # record b is exact, a is off by one
     for scale in (0.3, 1.0):
         nv = [by[(scale, t)]["nvpa"] for t in (0, 1, 2)]
@@ -83,7 +83,7 @@ def test_sweep_cli_reads_artifact_only(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Signed offset" in out and "+1:2" in out
     data = json.loads((tmp_path / "run" / "nvpa_sweep.json").read_text(encoding="utf-8"))
-    assert [(r["tolerance"], r["nvpa"]) for r in data["rows"]] == [(0, 0.0), (1, 1.0)]
+    assert [(r["tolerance"], r["nvpa"]) for r in data["rows"]] == [("0", 0.0), ("1", 1.0)]
     with pytest.raises(SystemExit, match="nvpa"):
         cli.main(["nvpa-sweep", "--run-dir", str(tmp_path / "empty")])
 
@@ -121,3 +121,105 @@ def test_summary_reports_nvpa_vs_human_placement(tmp_path):
     few = build_summary(m, store, config_from_dict({"bootstrap": {"n_boot": 20}, "nvpa": {"shuffle_reps": 2}}),
                         human={**human, "records": human["records"][:3]})
     assert few["human_metrics"]["nvpa_vs_human_placement"] is None
+
+
+# ---- asymmetric tolerance and threshold scale ----------------------------------------------
+def test_asymmetric_tolerance_matching():
+    from nvtts_eval.nvpa.matching import effective_tolerance, match_events, tolerance_bounds, tolerance_label
+    late = ({6: {"breathing"}}, {6: {"breathing": 0.9}})
+    early = ({4: {"breathing"}}, {4: {"breathing": 0.9}})
+    V = set(range(20))
+    gold = [("breathing", 5)]
+    assert match_events(gold, *late, V, (0, 1))[0][0].hit                       # one gap LATE is accepted by 0:1
+    r = match_events(gold, *early, V, (0, 1))[0][0]
+    assert not r.hit and r.reason == "wrong_position"                           # one gap EARLY is not
+    assert match_events(gold, *early, V, (1, 0))[0][0].hit and not match_events(gold, *late, V, (1, 0))[0][0].hit
+    assert match_events(gold, *early, V, 1)[0][0].hit and match_events(gold, *late, V, 1)[0][0].hit      # symmetric int
+    assert match_events(gold, *late, V, (0, 1))[0][0].offset_words == 1
+    assert tolerance_bounds(2) == (2, 2) and tolerance_label((0, 1)) == "0:1" and tolerance_label((1, 1)) == "1"
+    assert effective_tolerance({"tolerance_words": 1}) == (1, 1)
+    assert effective_tolerance({"tolerance_words": 1, "tolerance_before": 0, "tolerance_after": None}) == (0, 1)
+    assert effective_tolerance({"tolerance_words": 2, "tolerance_after": 3}) == (2, 3)
+    with pytest.raises(ValueError):
+        tolerance_bounds((-1, 1))
+
+
+def test_sweep_with_asymmetric_pairs_and_cli_parsing(tmp_path, capsys):
+    # detections one gap LATE for both events (gap 6 vs 5, gap 13 vs 12): 0:1 accepts them, 1:0 does not
+    res = sweep([rec()], THR, tolerances=(0, (0, 1), (1, 0), 1), scales=(1.0,), reps=5, seed=0)
+    by = {r["tolerance"]: r for r in res["rows"]}
+    assert by["0"]["nvpa"] == 0.0 and by["0:1"]["nvpa"] == 1.0 and by["1:0"]["nvpa"] == 0.0 and by["1"]["nvpa"] == 1.0
+    assert by["0:1"]["shuffle"] <= by["1"]["shuffle"]                           # narrower window: chance can only drop
+    store = ArtifactStore(tmp_path / "run")
+    store.write("nvpa", [rec()], dict(metric_version="1", input_hash="h", config_hash="c",
+                                      config={"params": {"tolerance_words": 1}, "detector": {"thresholds": THR}}))
+    assert cli.main(["nvpa-sweep", "--run-dir", str(tmp_path / "run"), "--tolerances", "0", "0:1", "--scales", "1.0",
+                     "--reps", "3"]) == 0
+    out = capsys.readouterr().out
+    assert " 0:1 " in out or "0:1" in out
+
+
+def test_nvpa_metric_threshold_scale_and_asymmetric_tolerance(make_manifest, tmp_path):
+    from nvtts_eval.core import run_metric
+    from nvtts_eval.nvpa.metric import NvpaMetric, NvpaParams
+    text = "một hai [breathing] ba bốn [laughter] năm"
+    asr = {"sample_id": "s1", "tokens": [" MỘT", " HAI", " BA", " BỐN", " NĂM"], "timestamps": [0.0, 0.4, 1.2, 1.6, 2.4],
+           "text": "x", "duration": 3.0}
+    m = make_manifest([("s1", "spk_a", text, 3, [1])])
+
+    class Det:
+        nv_types = TYPES
+        thresholds = {"laughter": 0.5, "breathing": 0.5, "sniff": 1.01, "throatclearing": 1.01}
+
+        def describe(self):
+            return {"backend": "fake"}
+
+        def predict_windows(self, wav, sr, windows):      # breathing p=0.4 at gap 3 (window starting 1.2): 1 gap LATE
+            return [None if w is None else {t: (0.4 if (t == "breathing" and round(w.t0, 3) == 1.2) else 0.0) for t in TYPES}
+                    for w in windows]
+
+    def go(**kw):
+        store = ArtifactStore(tmp_path / f"run_{len(kw)}_{sorted(kw.items())}".replace(" ", ""))
+        store.write("asr", [asr], dict(metric_version="1", input_hash="h", config_hash="c", config={}))
+        return run_metric(NvpaMetric(store, Det(), params=NvpaParams(**kw)), m, store).records[0]
+    r = go()                                                        # scale 1: 0.4 < 0.5 -> nothing detected
+    assert r["pred"] == [] and [e["hit"] for e in r["events"]] == [False, False]
+    r = go(threshold_scale=0.75)                                    # 0.5 * 0.75 = 0.375 <= 0.4 -> breathing detected at gap 3
+    assert r["pred"] == [[3, ["breathing"]]] and r["events"][0]["hit"] and r["events"][0]["offset_words"] == 1
+    r = go(threshold_scale=0.75, tolerance_before=1, tolerance_after=0)          # late by one is not allowed now
+    assert not r["events"][0]["hit"] and r["events"][0]["reason"] == "wrong_position"
+    r = go(threshold_scale=0.75, tolerance_before=0, tolerance_after=1)
+    assert r["events"][0]["hit"]
+
+
+def test_config_asymmetric_and_scale_validation():
+    c = config_from_dict({"nvpa": {"tolerance_before": 0, "tolerance_after": 1, "threshold_scale": 0.75}})
+    assert (c.nvpa.tolerance_before, c.nvpa.tolerance_after, c.nvpa.threshold_scale) == (0, 1, 0.75)
+    for bad in ({"tolerance_before": -1}, {"threshold_scale": 0}, {"threshold_scale": -1}):
+        with pytest.raises(ValueError):
+            config_from_dict({"nvpa": bad})
+
+
+def test_summary_tolerance_check_and_labels(tmp_path):
+    parser = NVParser()
+    samples = [Sample.from_text(f"s{i}", "spk_a", "a [breathing] b c [laughter] d", parser) for i in (1, 2)]
+    m = Manifest(ManifestHeader(track="A", source="model", split="dev"), samples)
+    store = ArtifactStore(tmp_path / "run")
+    recs = []
+    for s in samples:
+        r = rec(s.sample_id, events=(("breathing", 1), ("laughter", 3)), n_words=4,
+                probs=[[2, P(breathing=0.9)], [3, P(laughter=0.9)]])          # breathing late by one, laughter exact
+        r["pred"] = [[2, ["breathing"]], [3, ["laughter"]]]
+        for e in r["events"]:                                                    # what the 0:1 run would have stored
+            e["hit"], e["reason"] = True, "ok"
+        recs.append(r)
+    store.write("nvpa", recs, dict(metric_version="1", input_hash="h", config_hash="c",
+                                   config={"params": {"tolerance_words": 1, "tolerance_before": 0, "tolerance_after": 1},
+                                           "detector": {"thresholds": THR}}))
+    from nvtts_eval.report.summary import format_summary
+    s = build_summary(m, store, config_from_dict({"bootstrap": {"n_boot": 20}, "nvpa": {"shuffle_reps": 3}}))
+    n = s["automatic_metrics"]["nvpa"]
+    assert (n["tolerance"], n["tolerance_before"], n["tolerance_after"]) == ("0:1", 0, 1) and n["value"] == 1.0
+    checks = {c["tolerance"]: c["nvpa"] for c in n["tolerance_check"]}
+    assert checks == {"0": 0.5, "0:1": 1.0, "2": 1.0}
+    assert "tol=-0/+1 word" in format_summary(s) and "tolerance check" in format_summary(s)

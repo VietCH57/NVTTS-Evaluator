@@ -58,7 +58,10 @@ class BootstrapConfig:
 @dataclass
 class NvpaConfig:
     detector_path: Optional[str] = None   # trained with `train-detector`
-    tolerance_words: int = 1              # [ASSUMPTION] position tolerance in reference words
+    tolerance_words: int = 1              # [ASSUMPTION] symmetric position tolerance in reference words
+    tolerance_before: Optional[int] = None   # optional asymmetric override: gaps a detection may be EARLIER than gold
+    tolerance_after: Optional[int] = None    # ... or LATER (evidence on real data: detections are late, almost never early)
+    threshold_scale: float = 1.0          # [ASSUMPTION] multiplier on every enabled detector threshold
     min_window: float = 0.2
     max_window: float = 3.0
     unreliable_policy: str = "miss"       # [ASSUMPTION] events that cannot be localised: miss | exclude
@@ -105,8 +108,10 @@ class EvalConfig:
             raise ValueError("wer.aggregation must be corpus|sample_mean")
         if self.nvpa.unreliable_policy not in ("miss", "exclude"):
             raise ValueError("nvpa.unreliable_policy must be miss|exclude")
-        if self.nvpa.tolerance_words < 0:
-            raise ValueError("nvpa.tolerance_words must be >= 0")
+        if min(self.nvpa.tolerance_words, self.nvpa.tolerance_before or 0, self.nvpa.tolerance_after or 0) < 0:
+            raise ValueError("nvpa tolerances must be >= 0")
+        if self.nvpa.threshold_scale <= 0:
+            raise ValueError("nvpa.threshold_scale must be > 0")
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
