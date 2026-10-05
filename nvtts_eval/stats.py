@@ -124,3 +124,50 @@ def macro_mean(records: Iterable[Dict[str, Any]], group_key: str, value_key: str
     if not sums:
         return NAN
     return sum(sum(v) / len(v) for v in sums.values()) / len(sums)
+
+
+def bootstrap_ratio_ci(
+    numerators: Sequence[Any],
+    denominators: Sequence[Any],
+    clusters: Optional[Sequence[Hashable]] = None,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> Tuple[float, float]:
+    """Percentile bootstrap CI of sum(num)/sum(den), e.g. corpus-level WER
+    (total errors / total reference words). With `clusters`, resamples whole clusters."""
+    if len(numerators) != len(denominators):
+        raise ValueError("numerators and denominators must have the same length")
+    if clusters is not None and len(clusters) != len(numerators):
+        raise ValueError("clusters must have the same length as numerators")
+    rows = [(float(n), float(d), (clusters[i] if clusters is not None else None))
+            for i, (n, d) in enumerate(zip(numerators, denominators)) if _valid(n) and _valid(d)]
+    if len(rows) < 2:
+        return NAN, NAN
+    rng = random.Random(seed)
+    ratios: List[float] = []
+    if clusters is None:
+        k = len(rows)
+        for _ in range(n_boot):
+            picks = [rows[rng.randrange(k)] for _ in range(k)]
+            den = sum(p[1] for p in picks)
+            if den > 0:
+                ratios.append(sum(p[0] for p in picks) / den)
+    else:
+        agg: Dict[Hashable, List[float]] = defaultdict(lambda: [0.0, 0.0])
+        for n, d, c in rows:
+            agg[c][0] += n
+            agg[c][1] += d
+        if len(agg) < 2:
+            return NAN, NAN
+        cl = list(agg.values())
+        k = len(cl)
+        for _ in range(n_boot):
+            picks = [cl[rng.randrange(k)] for _ in range(k)]
+            den = sum(p[1] for p in picks)
+            if den > 0:
+                ratios.append(sum(p[0] for p in picks) / den)
+    if not ratios:
+        return NAN, NAN
+    ratios.sort()
+    return percentile(ratios, 100 * alpha / 2), percentile(ratios, 100 * (1 - alpha / 2))

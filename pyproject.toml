@@ -10,8 +10,13 @@ requires-python = ">=3.9"
 dependencies = []          # core (parser, manifest, scoring) is stdlib-only
 
 [project.optional-dependencies]
-dev = ["pytest"]
-audio = ["soundfile", "numpy"]
+dev = ["pytest", "pyyaml", "soundfile", "numpy", "scipy", "sentencepiece"]
+audio = ["soundfile", "numpy", "scipy"]
+config = ["pyyaml"]
+asr = ["sherpa-onnx", "sentencepiece"]
+# torch: install the build matching your CUDA/CPU setup first (https://pytorch.org)
+mos = ["transformers"]
+asv = ["speechbrain"]
 
 [tool.setuptools.packages.find]
 include = ["nvtts_eval*"]

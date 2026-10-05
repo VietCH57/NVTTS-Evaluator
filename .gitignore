@@ -1,18 +1,50 @@
+# --- Virtual environments ---
 .venv/
+venv/
+env/
+
+# --- Dataset (large; shared separately, e.g. as a private Kaggle Dataset) ---
 data/vinv-tts
 
-# Python bytecode and caches
+# --- Model weights and caches ---
+# hynt/Zipformer-30M-RNNT-6000h is CC BY-NC-ND 4.0: never commit or redistribute it.
+models/
+pretrained_models/
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+bpe.model
+tokens.txt
+.cache/
+huggingface/
+
+# --- Evaluation outputs (regenerate with `python -m nvtts_eval.cli run ...`) ---
+runs/
+evaluation_output/
+# Generated manifests hold absolute paths of one machine (e.g. D:/Work/...).
+# Uncomment to stop tracking them; `git rm --cached manifests/*.jsonl` if already committed.
+# manifests/*.jsonl
+
+# --- Secrets ---
+.env
+.env.*
+*.token
+kaggle.json
+
+# --- Python bytecode and caches ---
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 
-# Packaging and build artifacts
+# --- Packaging and build artifacts ---
 *.egg-info/
 build/
 dist/
 
-# Coverage and type-checker caches
+# --- Coverage and type-checker caches ---
 .coverage
 .coverage.*
 htmlcov/
@@ -20,7 +52,10 @@ htmlcov/
 .pyre/
 .ruff_cache/
 
-# Local editor and OS files
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Local editor and OS files ---
 .vscode/
 .idea/
 .DS_Store

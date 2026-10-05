@@ -1,0 +1,40 @@
+# Evaluation config. Unknown keys are errors. [ASSUMPTION] marks development choices.
+asr:
+  backend: sherpa_onnx_offline          # hynt/Zipformer-30M-RNNT-6000h via sherpa-onnx
+  model_dir: D:/Work/models/Zipformer-30M-RNNT-6000h   # needs encoder/decoder/joiner .onnx + tokens.txt
+  use_int8: false                       # [ASSUMPTION] fp32 weights
+  num_threads: 4
+  decoding_method: greedy_search
+
+pmos:
+  repo_id: prj-beatrice/dnsmos-torch-native
+  revision: null                        # pin a commit hash after reading the repo's remote code
+  device: auto
+  output: ovrl                          # [ASSUMPTION] sig | bak | ovrl | p808
+
+ss:
+  source: speechbrain/spkrec-ecapa-voxceleb
+  savedir: D:/Work/models/spkrec-ecapa-voxceleb
+  device: auto
+  ref_mode: centroid                    # [ASSUMPTION] centroid | mean_cosine
+  max_reference_clips: null             # e.g. 20 to cap work for speakers with hundreds of clips
+
+wer:
+  aggregation: corpus                   # [ASSUMPTION] corpus | sample_mean
+
+text_norm:                              # [ASSUMPTION]
+  nfc: true
+  lowercase: true
+  strip_punct: true
+
+scoring:                                # [ASSUMPTION] normalisation of raw values to [0,1]
+  mos_min: 1.0
+  mos_max: 5.0
+  clip_wer: true
+  clip_ss: true
+
+bootstrap:
+  n_boot: 2000
+  alpha: 0.05
+  seed: 0
+  min_n: 10

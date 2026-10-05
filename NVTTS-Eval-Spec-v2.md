@@ -1,898 +1,409 @@
-# ViNV-TTS Evaluation Framework — Project Context & Requirements
+# ViNV-TTS Evaluation Framework — System Description (v2)
 
-You are working on an evaluation codebase for the **Vietnamese Non-Verbal Text-to-Speech for Conversational Synthesis (ViNV-TTS)** shared task.
+You are working on an evaluation codebase for the **Vietnamese Non-Verbal Text-to-Speech for Conversational Synthesis (ViNV-TTS)** shared task (VLSP 2026).
 
-The purpose of this codebase is **model development and internal evaluation**, not exact reproduction of the organizer's official evaluator.
+This codebase is for **model development and internal evaluation**. It is NOT a reproduction of the organizers' official evaluator.
 
-The evaluator should allow researchers to run evaluation on **one model/output at a time** and obtain a structured set of metrics. Comparing multiple models or experiments is outside the scope of this codebase.
-
----
-
-## 1. Task Background
-
-The system receives Vietnamese text containing inline non-verbal vocalization (NV) tags such as:
-
-* `[laughter]`
-* `[breathing]`
-* `[sniff]`
-* `[throatclearing]`
-
-and synthesizes conversational Vietnamese speech.
-
-The system should:
-
-* preserve the linguistic content;
-* realize the requested NV type;
-* place the NV at the intended position;
-* produce natural and high-quality speech;
-* preserve the target speaker identity.
-
-There are two tracks:
-
-### Track A — Core
-
-The target speaker is seen during training.
-
-### Track B — Advanced
-
-The target speaker is unseen and is specified using a short reference audio clip. Zero-shot voice cloning is required.
+This v2 replaces v1. It keeps v1's principles and incorporates (a) facts verified on the released data, (b) corrections to v1, and (c) decisions made since. Section 20 lists what is still undecided.
 
 ---
 
-# 2. Organizer Metrics
+## 1. Scope
 
-The shared task defines the following metrics.
-
-### NV Placement Accuracy (NVPA)
-
-Measures whether required NV events are correctly realized at their intended positions.
-
-Range:
+The evaluator evaluates **one model's outputs per run**.
 
 ```text
-0–1
+Input : evaluation manifest + one model's generated audio (+ reference info)
+Output: metrics, diagnostics, scores, report (+ optional human-evaluation data)
 ```
 
-Higher is better.
+The evaluator MUST NOT: compare models, rank/leaderboard, track experiments or keep a database, compute improvements between runs, or select models. Comparison happens outside this codebase.
 
-An NV event is considered correctly realized when:
-
-* the required NV type is present;
-* it occurs at the intended position.
-
-The exact official implementation is not necessarily available. Therefore, this codebase should implement a **development-oriented approximation**, and all assumptions must be explicit/configurable.
+Platform note: the developer works on Windows (`D:\Work\...`). Use `pathlib`, open all text files with `encoding="utf-8"`, and avoid shell-specific assumptions.
 
 ---
 
-### Speech Naturalness (SN)
+## 2. Task Background
 
-Human perceptual rating.
+Input: Vietnamese text with inline NV tags (`[laughter]`, `[breathing]`, `[sniff]`, `[throatclearing]`). Output: conversational speech where each tagged NV is present, of the correct type, at the intended position, natural, intelligible, and in the target speaker's voice.
 
-Range:
+- **Track A (Core):** speaker seen during training.
+- **Track B (Advanced):** unseen speaker given by a short reference clip (zero-shot).
 
-```text
-1–5
-```
-
-Higher is better.
+**One run evaluates exactly one track.** The track is a run-level setting (`track: A | B`) validated against the manifest. Reports never show Track A and Track B scores side by side.
 
 ---
 
-### Quality (Q)
+## 3. Dataset Facts (verified from the released train/dev data)
 
-Human perceptual rating of audio quality, including artifacts, distortion, noise, etc.
-
-Range:
+Layout:
 
 ```text
-1–5
+<root>/<split>/<spk_id>/<spk_id>.json     # list of {"audio", "text", "language_id"}
+<root>/<split>/<spk_id>/<audio files>.flac
+split ∈ {train, dev}
 ```
 
-Higher is better.
+- Metadata has ONLY `audio`, `text`, `language_id` (always `vi`). **No speaker field** (speaker = folder name), **no duration, no timestamps, no NV timing, no reference-clip field.**
+- The same `spk_id` in train and dev is the same person.
+
+| | train | dev |
+|---|---|---|
+| speakers | 189 | 46 (all also in train) |
+| utterances | 1739 | 316 |
+| hours | 5.90 | 1.04 |
+| NV events | 4646 | 809 |
+| utterances without NV | 0 | 0 |
+| dev `clean_text` found in train | — | 0 / 316 |
+
+- NV counts (train / dev): breathing 3733 / 674, laughter 681 / 102, sniff 117 / 14, throatclearing 115 / 19.
+- Audio: all 24 kHz mono FLAC; mix of PCM_24 (~75%) and PCM_16. Duration 2.6–25.8 s, median ~12.7 s. Median ~50 words/utterance (words = whitespace tokens, i.e. Vietnamese syllables), ~4.07 words/s. Dev matches train distributionally.
+- NVs per utterance: 1–10 (train). NV position (train): start 2.2%, middle ~95%, end 3.1%. Median distance between consecutive NVs: 12 words; 85 train pairs of NVs sit in the *same gap* between two words (51 of them sniff+breathing); ~5.5% of consecutive pairs are ≤1 word apart.
+- **Speaker distribution is extremely skewed.** Train: 6 speakers ≈ 76% of utterances (`spk_0000` alone 32%; 37% of dev); 101 speakers have a single utterance; 173 speakers have ≤5 utterances (0.95 h total). Dev: 30 of 46 speakers have one utterance. Tail speakers have only ~3–78 s of audio.
+- Text format (clean): NV tags are always whitespace-delimited (never glued to words or punctuation), no unbalanced brackets, no digits, NFC, almost entirely lowercase (some capitalised sentence starts), punctuation present in most utterances.
+- **Transcripts and tags are produced by an automated pipeline** (per the task description; consistent with observed ASR-like errors on proper nouns). Therefore even ground-truth audio will NOT achieve WER 0 or NVPA 1.
+
+Anything not listed above has not been verified; do not assume it.
 
 ---
 
-### Word Error Rate (WER)
+## 4. Official vs Development Assumption
 
-Measures speech intelligibility/content preservation.
-
-The organizer description specifies Zipformer as the ASR model.
-
-NV tags are excluded from WER computation.
-
-Range:
+Every parameter and behaviour in code and config must be labelled one of:
 
 ```text
-0–1
+[OFFICIAL]    stated in the task description
+[ASSUMPTION]  our development choice; configurable; recorded in every report
 ```
 
-Lower is better.
+Reports must print the active assumptions. Never claim the internal NVPA (or any score) matches the organizers' implementation.
 
 ---
 
-### Predicted MOS (pMOS)
+## 5. Metrics
 
-Automatic perceptual quality/naturalness prediction using DNSMOS.
-
-Range:
-
-```text
-1–5
-```
-
-Higher is better.
-
----
-
-### Speaker Similarity (SS)
-
-Measures similarity between target/reference speaker and synthesized speech using ECAPA-TDNN.
-
-Range:
-
-```text
-0–1
-```
-
-Higher is better.
+| Metric | Source | Range | Direction | Notes |
+|---|---|---|---|---|
+| NVPA | auto (dev approximation) | 0–1 | higher | required NV type present at intended position |
+| SN | human | 1–5 | higher | includes speech around NVs |
+| Q | human | 1–5 | higher | artifacts, noise, distortion |
+| WER | auto, Zipformer `[OFFICIAL]` | 0–1 | lower | NV tags removed from reference |
+| pMOS | auto, DNSMOS `[OFFICIAL]` | 1–5 | higher | |
+| SS | auto, ECAPA-TDNN `[OFFICIAL]` | 0–1 | higher | |
 
 ---
 
-# 3. Organizer Scoring Formula
+## 6. Scoring
 
-All components are normalized to `[0,1]`.
-
-## Track A
+All components are normalized to [0,1].
 
 ```text
-A =
-    0.30 * NVPA
-  + 0.15 * SN
-  + 0.15 * Q
-  + 0.15 * (1 - WER)
-  + 0.15 * pMOS
-  + 0.10 * SS
+Track A: A = 0.30 NVPA + 0.15 SN + 0.15 Q + 0.15 (1-WER) + 0.15 pMOS + 0.10 SS
+Track B: B = 0.30 NVPA + 0.15 SN + 0.15 Q + 0.10 (1-WER) + 0.10 pMOS + 0.20 SS
 ```
 
-where SN, Q and pMOS are normalized from `[1,5]` to `[0,1]`.
+Normalization rules:
 
-For example:
+- `[ASSUMPTION]` SN, Q, pMOS: `(x - 1) / 4`. The organizers say components are normalized to [0,1] but do not give the formula.
+- `[ASSUMPTION]` `1 - WER` is computed on WER clipped to [0,1] (raw WER can exceed 1; keep the raw value in reports).
+- `[ASSUMPTION]` SS: cosine similarity clipped to [0,1] (raw value kept in reports).
+
+### Automatic Score (Fast mode)
+
+Only the available components, **same weights as the official formula, no renormalization in the headline value**:
 
 ```text
-normalized = (score - 1) / 4
+AutoScore_A = 0.30 NVPA + 0.15 (1-WER) + 0.15 pMOS_norm + 0.10 SS
+AutoScore_B = 0.30 NVPA + 0.10 (1-WER) + 0.10 pMOS_norm + 0.20 SS
 ```
 
-## Track B
+Important: the weights sum to **0.70**, so AutoScore has a maximum of 0.70, not 1. Also report `AutoScore / 0.70` clearly labelled "renormalized (convenience only)". AutoScore must never be labelled official or final.
+
+### Final Score (Full mode)
+
+Computed only when both SN and Q are available. Never substitute pMOS for SN/Q, never duplicate pMOS, never fabricate. If unavailable: `Final Score: N/A`.
+
+When SN/Q come from a human-evaluation *subset*, the automatic components in the final score must be computed **on that same subset** (default `[ASSUMPTION]`; configurable). Report both subset-based and full-set automatic metrics.
+
+### Test vectors (recompute by hand in unit tests; do NOT copy numbers from older documents)
+
+Track A, NVPA 0.713, WER 0.043, pMOS raw 4.12, SS 0.871:
 
 ```text
-B =
-    0.30 * NVPA
-  + 0.15 * SN
-  + 0.15 * Q
-  + 0.10 * (1 - WER)
-  + 0.10 * pMOS
-  + 0.20 * SS
+1-WER = 0.957 ; pMOS_norm = (4.12-1)/4 = 0.780
+AutoScore_A = 0.3*0.713 + 0.15*0.957 + 0.15*0.780 + 0.10*0.871 = 0.56155
+AutoScore_A / 0.70 = 0.802
+
+with SN 4.10 -> 0.775 ; Q 4.25 -> 0.8125:
+A = 0.56155 + 0.15*0.775 + 0.15*0.8125 = 0.799675
 ```
 
 ---
 
-# 4. Two Evaluation Modes
+## 7. Evaluation Modes and Caching
 
-The framework MUST support two clearly separated modes.
+**Fast mode:** NVPA, WER, pMOS, SS → `AutoScore`. Does not produce SN, Q, or a final score. Report states: "Human evaluation: not available. Final score: N/A".
 
-## Mode 1 — Fast Evaluation
+**Full mode:** Fast results + human SN/Q (+ optional diagnostic ratings) → final score.
 
-This mode is intended for frequent model development.
-
-It uses only automatically computable metrics:
+Human evaluation is an additional stage and must NOT re-run automatic evaluation. Each metric writes its own artifact:
 
 ```text
-NVPA
-WER
-pMOS
-Speaker Similarity
+artifacts/<metric>/per_sample.jsonl   + meta (hash of generated audio set, manifest, metric config)
 ```
 
-It must NOT fabricate SN or Q.
-
-Therefore, Fast Evaluation does **not** produce the official final score.
-
-Instead, it produces an `Automatic Score`.
-
-### Automatic Track A Score
-
-Use only the available weighted components:
-
-```text
-AutoScore_A =
-    0.30 * NVPA
-  + 0.15 * (1 - WER)
-  + 0.15 * pMOS_normalized
-  + 0.10 * SS
-```
-
-### Automatic Track B Score
-
-```text
-AutoScore_B =
-    0.30 * NVPA
-  + 0.10 * (1 - WER)
-  + 0.10 * pMOS_normalized
-  + 0.20 * SS
-```
-
-These scores are useful for development but MUST NOT be labelled as the official/final competition score.
-
-The report should explicitly state that human metrics are unavailable.
-
-Example:
-
-```text
-Automatic Evaluation
-
-NVPA                  0.713
-WER                   0.043
-1-WER                 0.957
-pMOS                  4.12
-pMOS normalized       0.780
-Speaker Similarity    0.871
-
-Automatic Score
-Track A               0.555
-Track B               0.514
-
-Human Evaluation      Not available
-Final Score            N/A
-```
+The `score` stage only reads artifacts. A metric is recomputed only if its input hash changes.
 
 ---
 
-## Mode 2 — Full / Human Evaluation
+## 8. Data Layer
 
-Human evaluation provides:
+### 8.1 Adapter → canonical manifest
 
-```text
-SN
-Q
-```
-
-and optionally additional diagnostic human ratings such as:
+Layout-specific code lives only in a **dataset adapter** that converts the released data (and model outputs) into the canonical manifest. The rest of the evaluator knows only the manifest. Fields:
 
 ```text
-NV Naturalness
-NV Placement
+sample_id, track, speaker_id,
+text                 # raw, with tags
+clean_text           # tags removed (produced by the canonical parser)
+nv_events            # list of {type, gap_index}
+reference_audio      # path(s); see 8.3
+generated_audio      # path
+(optional) ground_truth_audio, duration
 ```
 
-The official final score can only be computed once SN and Q are available.
+### 8.2 One canonical NV parser
 
-The full score must use the organizer formulas above.
+All components consume parser output; no other module parses raw tags.
 
-Do NOT substitute pMOS for SN or Q.
+- Tags are matched as `[...]`; the four known types are configurable. Unknown/malformed tags are reported and handled by a configurable policy (`error | drop | keep_as_unknown`); data currently contains none.
+- `clean_text`: tags removed, whitespace collapsed. Words = whitespace tokens.
+- `gap_index` = number of words before the tag (0 = before the first word, `n_words` = after the last). Several NVs may share one gap; their order is preserved in the list but treated per matcher config (see 9.4).
+- Handles: tag at start/end, multiple tags, adjacent tags, same-gap tags of different types.
 
-Do NOT duplicate pMOS to fill missing human metrics.
+### 8.3 Reference audio
+
+The released metadata has no reference-clip field.
+
+- Track B: the reference clip is supplied with the evaluation input.
+- Track A: `[ASSUMPTION]` reference = speaker centroid embedding from that speaker's *training* audio (rule configurable: centroid / single clip / N clips). Report how many seconds of reference audio each speaker has; tail speakers have as little as ~3 s.
 
 ---
 
-# 5. Important Design Principle
+## 9. NVPA (development approximation)
 
-The evaluator is a **single-model evaluation tool**.
-
-Each execution evaluates one model/output.
-
-The evaluator MUST NOT:
-
-* compare Model A vs Model B;
-* maintain an experiment database;
-* rank models;
-* calculate improvements between experiments;
-* generate leaderboards;
-* manage model selection.
-
-Researchers will perform model comparison outside this codebase.
-
-The evaluator's responsibility is simply:
+### 9.1 Pipeline
 
 ```text
-Input:
-    one model's generated outputs
-    evaluation manifest
-    required reference information
-
-Output:
-    metrics
-    diagnostics
-    optional human-evaluation data
-    scores
-    evaluation report
+generated audio
+   ├─ ASR (Zipformer) → recognized words + timing   (shared with WER)
+   └─ NV detector     → [(type, start, end, confidence)]
+gold: clean_text words + nv_events (type, gap_index)
+   → map detected NV times to gap indices in the recognized transcript
+   → map recognized transcript to clean_text via edit-distance alignment
+   → match detected vs gold events
 ```
+
+Do not assume the Zipformer checkpoint exports word-level timing. If it exports only token-level timing, derive word timing from tokens; if timing is unavailable, fall back to forced alignment. Source of timing is configurable. Define behaviour when ASR is poor (low alignment confidence): mark the sample as `alignment_unreliable` and report it, do not silently score.
+
+### 9.2 Detector (pluggable, none assumed adequate)
+
+Define a detector interface. Candidates (e.g. pretrained audio-event tagger; classifier trained on the corpus with weak labels derived from ASR timing) are only trusted after the calibration runs in section 13. Detector choice is open (section 20).
+
+### 9.3 Configuration
+
+```text
+nvpa:
+  detector:            <plugin + checkpoint>
+  timing_source:       <asr_tokens | forced_alignment | ...>
+  matching:            <e.g. greedy | optimal assignment>
+  position_tolerance:  <in words and/or seconds>
+  type_matching:       exact
+  same_gap_order:      unordered   # [ASSUMPTION]
+  aggregation:         micro       # headline NVPA [ASSUMPTION]
+```
+
+### 9.4 Matching notes (from the data)
+
+- One word ≈ 0.25 s; consecutive NVs are typically ~12 words apart, so a loose tolerance can match by chance. See the shuffle baseline (section 13).
+- Same-gap NVs of different types (e.g. sniff + breathing) are common enough to need explicit handling; ~5.5% of consecutive NV pairs are ≤1 word apart, so the detector must separate nearby events.
+
+### 9.5 Per-event record and failure taxonomy
+
+For every gold NV event store: gold type, gold gap index, matched detection (if any), position error (words and seconds), detected duration, and a failure reason:
+
+```text
+ok | missing | wrong_type | wrong_position | alignment_unreliable
+```
+
+Spurious (extra, unrequested) NVs are reported separately and do NOT enter NVPA.
+
+### 9.6 Aggregation and uncertainty
+
+- Headline NVPA: micro average over events `[ASSUMPTION]`. Always also report macro over NV types and macro over speakers.
+- Breathing is ~80% of events, so micro NVPA mostly reflects breathing; the per-type figures are essential.
+- Dev has only 14 sniff and 19 throatclearing events (one event ≈ 5–7 points). Every NVPA figure is reported with its `n` and a bootstrap confidence interval.
 
 ---
 
-# 6. Recommended Evaluation Flow
-
-The conceptual pipeline is:
+## 10. WER
 
 ```text
-Evaluation Dataset
-        |
-        v
-Generated Audio
-        |
-        v
-+----------------------+
-| Automatic Evaluation |
-+----------------------+
-        |
-        +--> NVPA
-        |
-        +--> WER
-        |
-        +--> pMOS
-        |
-        +--> Speaker Similarity
-        |
-        v
-Automatic Metrics
-        |
-        v
-Automatic Score
-
-
-Optional:
-
-Evaluation Subset
-        |
-        v
-Human Evaluation Interface
-        |
-        +--> SN
-        +--> Q
-        +--> NV Naturalness
-        +--> NV Placement
-        |
-        v
-Human Scores
-        |
-        v
-Combine with automatic metrics
-        |
-        v
-Final Track A / Track B Score
+generated audio → Zipformer → ASR text → normalization → WER vs normalized clean_text
 ```
+
+- NV tags are removed from the reference (via the canonical parser) `[OFFICIAL]`.
+- Normalization `[ASSUMPTION]`, configurable: Unicode NFC, lowercase, strip punctuation, collapse whitespace. Data contains no digits.
+- Tokenization: whitespace tokens (syllables).
+- Zipformer checkpoint/config is configurable. Store the ASR transcript per sample.
+- Report raw WER (may exceed 1) and the clipped value used in scoring.
+- Reference text is itself automatically produced and noisy, so a non-zero WER floor is expected (see calibration).
 
 ---
 
-# 7. Do Not Re-run Automatic Evaluation During Human Evaluation
+## 11. pMOS
 
-Human evaluation should be an additional stage.
-
-For example:
-
-### Step 1
-
-Run Fast Evaluation:
-
-```text
-auto_metrics.json
-```
-
-### Step 2
-
-Select a fixed human-evaluation subset.
-
-### Step 3
-
-Human annotators provide:
-
-```text
-human_scores.json
-```
-
-### Step 4
-
-Combine the existing automatic metrics with human scores to calculate the final score.
-
-Do not unnecessarily run Zipformer/DNSMOS/ECAPA again if the generated audio and automatic results have not changed.
+DNSMOS or a selected MOS model, configurable. Resample to the model's required rate (24 kHz → 16 kHz for DNSMOS). Verify how the chosen implementation handles audio longer than its analysis window (utterances reach ~26 s). The output used (e.g. OVRL vs SIG/BAK) is configurable `[ASSUMPTION]`. Report raw and normalized pMOS. Never use as SN/Q.
 
 ---
 
-# 8. Evaluation Dataset
-
-The evaluator should operate from a structured manifest.
-
-Conceptually each sample should contain:
+## 12. Speaker Similarity
 
 ```text
-sample_id
-text
-clean_text
-nv_events
-speaker_id
-reference_audio
-generated_audio
+reference audio → ECAPA-TDNN → reference embedding
+generated audio → ECAPA-TDNN → generated embedding → cosine similarity
 ```
 
-For Track A, reference audio may be used for speaker evaluation according to the dataset setup.
-
-For Track B, the target/reference speaker audio is explicitly required for speaker similarity.
-
-The exact dataset structure should be discovered from the actual released training/dev data rather than assumed.
+Checkpoint, preprocessing, sample rate, VAD, and similarity method are configurable. Report per-sample values and mean, median, std, min, max, percentiles. Report per speaker (and the amount of reference audio per speaker). Do not hide per-sample values.
 
 ---
 
-# 9. NV Representation
+## 13. Calibration Runs (new)
 
-The input transcript contains inline tags.
+A calibration run is an ordinary single-model run with a different audio source; the tool does not compare it with anything. Researchers interpret model results against it externally.
 
-For example:
+1. **Ground-truth run:** treat the dev ground-truth audio as generated audio. Yields the practical ceiling for WER, NVPA, pMOS, SS, given noisy transcripts and tags. Also validates the NV detector and the position mapping.
+2. **NVPA shuffle baseline:** keep the audio, shuffle gold NV positions (within the same utterance), recompute NVPA. Shows how much NVPA a given tolerance gives by chance; use it to tune tolerance.
+3. **Optional degradation checks:** e.g. audio with NVs removed or replaced, to confirm NVPA drops.
 
-```text
-Hôm nay [laughter] tôi rất vui.
-```
-
-The parser should transform this into a structured representation such as:
-
-```text
-clean_text:
-    Hôm nay tôi rất vui.
-
-nv_events:
-    type: laughter
-    position: between "nay" and "tôi"
-```
-
-Do not make the rest of the evaluator independently parse raw NV tags.
-
-There should be one canonical parser/representation shared by the evaluation components.
+Do not trust any NVPA configuration that has not passed 1–2.
 
 ---
 
-# 10. NVPA Should Have Diagnostic Metrics
+## 14. Diagnostics (modular, not mixed with the official score)
 
-Although the primary metric is NVPA, the evaluator should expose additional diagnostic information.
-
-For example:
+Breakdowns, each with `n` and a flag when `n` is below a configurable threshold:
 
 ```text
-NV Detection Rate
-NV Type Accuracy
-NV Placement Error
-NV Duration
+overall · by NV type · by speaker (micro and macro) · speaker group (head vs tail)
+by utterance length · by number of NVs · by NV position (start / middle / end)
 ```
 
-Potential breakdown:
+Position classes start/end are sparse in dev (13 and 27 events); treat them as indicative only. NV Detection Rate, NV Type Accuracy, NV Placement Error, NV Duration are exposed per type.
 
-```text
-NVPA
-    laughter
-    breathing
-    sniff
-    throatclearing
-```
+Not in scope (decided): "with NV vs without NV" comparison and any control synthesis; every data utterance contains NVs, and Zipformer is expected to ignore NVs. The calibration ground-truth run will show whether ASR transcripts near NVs look unusual.
 
-Also consider contextual breakdowns:
-
-```text
-NV at beginning of utterance
-NV in middle of utterance
-NV at end of utterance
-multiple NVs in one utterance
-```
-
-These diagnostic metrics are for research/debugging and do not automatically replace the main NVPA metric.
+Do not over-engineer: the core metrics come first.
 
 ---
 
-# 11. NVPA Implementation Must Be Configurable
+## 15. Human Evaluation
 
-The organizer description does not specify all details required for exact NV alignment.
+Fixed subset selected with a seed and saved. Stratify over: NV type (include rare sniff/throatclearing utterances), NV position, head vs tail speakers, utterance length, NV count.
 
-Therefore, do NOT hard-code assumptions such as:
+Absolute ratings per sample (1–5): **SN**, **Q** (required); **NV Naturalness**, **NV Placement** (diagnostic; not in the official formula unless explicitly configured). Optional pairwise comparison, never affecting the official score unless configured.
 
-* a specific temporal tolerance;
-* a specific NV detector;
-* a specific alignment algorithm;
-* a specific matching strategy.
+- Randomized, anonymized presentation; annotators never see model identity.
+- **Rater sanity anchors:** insert hidden ground-truth items (and optionally degraded items); flag raters whose anchor ratings are implausible.
+- Store per-rater scores; report rater count and spread. Aggregate: mean per sample, then mean over samples.
 
-Instead, make such parameters configurable.
-
-For example conceptually:
-
-```text
-NVPA configuration
-
-detector:
-    <configurable>
-
-matching:
-    <configurable>
-
-position_tolerance:
-    <configurable>
-
-type_matching:
-    exact
-```
-
-The code should clearly distinguish:
-
-```text
-officially specified behavior
-```
-
-from:
-
-```text
-development assumption
-```
+Data flow: `auto artifacts → human subset → human_scores.json → combine → final score`. The annotator interface is decided later (open).
 
 ---
 
-# 12. WER Evaluation
-
-The WER pipeline should conceptually be:
-
-```text
-Generated Audio
-      |
-      v
-Zipformer ASR
-      |
-      v
-Recognized Text
-      |
-      v
-Text normalization
-      |
-      v
-WER
-```
-
-NV tags must be removed from the reference transcript before WER calculation.
-
-For example:
-
-```text
-Reference:
-
-Hôm nay [laughter] tôi rất vui.
-
-becomes:
-
-Hôm nay tôi rất vui.
-```
-
-The exact Zipformer checkpoint/configuration should be configurable rather than assumed.
-
-The evaluator should retain the ASR transcript for error analysis.
-
----
-
-# 13. pMOS
-
-Use DNSMOS or the selected automatic MOS model.
-
-Report both:
-
-```text
-raw pMOS:          4.12
-normalized pMOS:   0.780
-```
-
-Do not use pMOS as a substitute for human SN/Q.
-
-The exact DNSMOS implementation/model should be configurable.
-
----
-
-# 14. Speaker Similarity
-
-Conceptually:
-
-```text
-Reference Audio
-      |
-      v
-ECAPA-TDNN
-      |
-      v
-Reference Embedding
-      |
-      |
-Generated Audio
-      |
-      v
-ECAPA-TDNN
-      |
-      v
-Generated Embedding
-      |
-      v
-Similarity
-```
-
-The exact ECAPA checkpoint, preprocessing, sample rate, VAD and similarity method should be configurable.
-
-Report per-sample scores as well as aggregate statistics.
-
-Useful diagnostics include:
-
-```text
-mean
-median
-std
-min
-max
-percentiles
-```
-
-Do not hide the per-sample values.
-
----
-
-# 15. Human Evaluation
-
-Human evaluation should use a **fixed evaluation subset** so that different evaluation runs can use the same samples when researchers manually compare results outside the codebase.
-
-The subset should be representative of:
-
-* different NV types;
-* different positions;
-* different speakers;
-* different utterance lengths;
-* different NV counts.
-
-The evaluator should support anonymous/randomized presentation to annotators.
-
-Annotators should not be shown the model identity.
-
----
-
-# 16. Human Evaluation Metrics
-
-Required:
-
-### Speech Naturalness
-
-Scale:
-
-```text
-1–5
-```
-
-### Audio Quality
-
-Scale:
-
-```text
-1–5
-```
-
-Useful additional diagnostic ratings:
-
-### NV Naturalness
-
-```text
-1–5
-```
-
-### NV Placement
-
-```text
-1–5
-```
-
-These additional metrics are diagnostic unless explicitly incorporated into the competition formula.
-
-Do not silently modify the official scoring formula to include them.
-
----
-
-# 17. Human Evaluation Design
-
-Human evaluation should support both:
-
-### Absolute evaluation
-
-Annotator hears one generated sample and rates it.
-
-### Optional pairwise evaluation
-
-Two anonymized samples can be compared.
-
-Pairwise evaluation is optional and should NOT affect the official score unless explicitly configured.
-
----
-
-# 18. Output Structure
-
-Each evaluation run should produce a self-contained result.
-
-Conceptually:
+## 16. Output Structure
 
 ```text
 evaluation_output/
-    summary.json
-    per_sample.json/csv
-    diagnostics/
-    human_evaluation/
-    report/
+  summary.json
+  per_sample.csv|json
+  artifacts/<metric>/...
+  diagnostics/
+  human_evaluation/
+  report/
 ```
 
-The exact file format can be decided during implementation.
+`summary.json` keeps these blocks separate: `automatic_metrics`, `human_metrics`, `automatic_score`, `final_score`, `active_assumptions`, `data_counts`.
 
-The summary should clearly distinguish:
-
-```text
-automatic metrics
-human metrics
-automatic score
-final score
-```
-
-Example:
+Example report (Track A):
 
 ```text
-Automatic Metrics
------------------
-NVPA               0.713
-WER                0.043
-pMOS               4.12
-SS                 0.871
+Automatic Metrics                       (n=316, 95% CI in summary.json)
+  NVPA 0.713 | WER 0.043 (1-WER 0.957) | pMOS 4.12 (norm 0.780) | SS 0.871
+Automatic Score  0.562   (max 0.70; renormalized 0.802)
 
-Human Metrics
---------------
-SN                 4.10
-Q                  4.25
-
-Final Score
------------
-Track A            0.799
-Track B            0.772
-```
-
-If human metrics are unavailable:
-
-```text
-Human Metrics
---------------
-SN                 N/A
-Q                  N/A
-
-Final Score
------------
-Track A            N/A
-Track B            N/A
+Human Metrics:   SN N/A | Q N/A
+Final Score:     N/A
 ```
 
 ---
 
-# 19. Research-Oriented Diagnostics
+## 17. Engineering Principles
 
-The evaluator should retain enough information to answer questions such as:
+Reproducibility; transparent assumptions; modular evaluators; per-sample results; configurable checkpoints (never hard-coded); deterministic evaluation (fixed seeds, fixed subset); lazy-load heavy models; a failure on one sample is recorded and does not abort the run; clear separation of automatic and human evaluation.
 
-* Which NV type fails most often?
-* Are NVs missing or incorrectly typed?
-* Are NVs generated at the wrong position?
-* Does adding NVs increase WER?
-* Which NV type causes the most intelligibility degradation?
-* Does NV generation affect speaker similarity?
-* Does speaker similarity differ significantly across speakers?
-* Are errors concentrated in long or short utterances?
-* Does the model perform differently for one NV position versus another?
-
-Potential breakdowns:
+Proposed layout:
 
 ```text
-overall
-by NV type
-by speaker
-by utterance length
-by number of NVs
-by NV position
-with NV vs without NV
+nvtts_eval/
+  data/      adapter, nv_parser, manifest
+  metrics/   wer, pmos, speaker_sim, nvpa/{detector, mapping, matcher}
+  scoring/   auto_score, final_score         (pure functions)
+  human/     subset, export, import, anchors
+  report/
+  cli, configs/
+tests/       parser edge cases, scoring test vectors (section 6), matcher cases
+scripts/     dataset_stats.py (already written)
 ```
 
-Do not over-engineer these analyses before the core evaluation works. They should be modular diagnostics.
+The evaluator should tell the researcher not only how well the model performs but **where and why it fails**.
 
 ---
 
-# 20. Important Constraints
+## 18. Constraints — Do NOT
 
-Do NOT:
-
-1. Invent official evaluator details that have not been provided.
-2. Claim that the internal NVPA implementation exactly matches the organizer.
+1. Invent official evaluator details that were not provided.
+2. Claim the internal NVPA matches the organizers'.
 3. Use pMOS as SN or Q.
-4. Produce a fake "Final Score" when human SN/Q are unavailable.
-5. Add extra metrics to the official scoring formula without explicit configuration.
-6. Build model-comparison functionality into the evaluator.
-7. Build an experiment-tracking/database system.
-8. Assume the dataset structure before inspecting the actual released data.
-9. Hard-code model checkpoints when they should be configurable.
-10. Mix research diagnostics with the official score.
+4. Produce a final score without human SN/Q.
+5. Add extra metrics to the official formula without explicit configuration.
+6. Build model comparison, ranking, or experiment tracking.
+7. Assume dataset properties not listed in section 3.
+8. Hard-code model checkpoints.
+9. Mix research diagnostics into the official score.
+10. Label AutoScore as official, or present it on a [0,1] scale without stating its 0.70 ceiling.
 
 ---
 
-# 21. Development Priority
+## 19. Development Phases
 
-Implement conceptually in this order:
-
-### Phase 1 — Dataset understanding
-
-First inspect the actual released dataset and determine:
-
-* metadata format;
-* transcript format;
-* NV tag format;
-* speaker information;
-* audio format;
-* reference audio availability;
-* split structure;
-* whether alignment/timestamp information exists.
-
-Do not start by assuming these properties.
-
-### Phase 2 — Automatic evaluation
-
-Implement:
-
-```text
-NVPA
-WER
-pMOS
-Speaker Similarity
-```
-
-and the corresponding automatic scores.
-
-### Phase 3 — NV diagnostics
-
-Implement:
-
-```text
-NV detection
-NV type accuracy
-NV placement error
-per-NV-type statistics
-```
-
-### Phase 4 — Human evaluation
-
-Implement:
-
-```text
-fixed subset
-anonymous samples
-SN
-Q
-optional NV Naturalness
-optional NV Placement
-```
-
-### Phase 5 — Final scoring
-
-Combine automatic and human metrics according to the Track A / Track B formulas.
+0. **Dataset understanding — done** (`dataset_stats.py`; results in section 3).
+1. **Data layer:** canonical NV parser, adapter, manifest, config skeleton, artifact/caching framework, scoring functions + test vectors.
+2. **Easy automatic metrics:** WER, pMOS, SS; AutoScore; ground-truth calibration run for these.
+3. **NVPA:** timing/mapping, detector plugin(s), matcher, per-event records, shuffle baseline, validation on ground-truth audio.
+4. **Diagnostics:** breakdowns with `n` and confidence intervals.
+5. **Human evaluation:** subset, anonymization, anchors, import/export.
+6. **Final scoring and reporting.**
 
 ---
 
-# 22. General Engineering Principle
+## 20. Open Decisions
 
-The evaluator is a **research instrument**, not merely a competition submission script.
-
-Prioritize:
-
-* reproducibility;
-* transparent assumptions;
-* modular evaluators;
-* per-sample results;
-* configurable model/checkpoint paths;
-* deterministic evaluation where possible;
-* useful diagnostic information;
-* clear separation between automatic and human evaluation.
-
-Most importantly:
-
-> The evaluator should tell the researcher not only **how well the model performs**, but also **where and why it fails**.
-
-Before implementing any major component, inspect the actual dataset and existing repository structure. If a required assumption is not supported by the available data or task specification, do not invent it; flag it as a configurable design decision or ask for clarification.
+- NVPA detector choice and default tolerance (to be set from calibration results).
+- Source of word/token timing from the chosen Zipformer checkpoint.
+- Whether the organizers' NVPA is micro or macro (unknown; ours is a configurable assumption).
+- DNSMOS variant/output and handling of long audio.
+- Track A reference-audio rule for speakers with very little training audio.
+- Local protocol for Track B evaluation: **deferred** (the released dev set has no unseen speakers; all 46 dev speakers are in train).
+- Human-evaluation interface and subset size.
+- Exact normalization the organizers apply to SN, Q, pMOS, SS, WER.
