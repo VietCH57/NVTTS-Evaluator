@@ -490,7 +490,7 @@ NVPA on dev (316 utterances, 809 gold events):
 | detection rate; type accuracy given detection | 0.764; 0.955 |
 | misses | wrong_position 120, missing 70, wrong_type 28, alignment_unreliable 1 |
 | spurious NVs per 100 words | 1.75 |
-| AutoScore of ground truth (Track A) | 0.525 of 0.70 (renormalised 0.751) |
+| AutoScore of ground truth (Track A) | 0.525 of 0.70 (renormalised 0.751) at the first operating point (tolerance ±1, trained thresholds) |
 
 Reading: the chain separates real placement from chance (about 5.6 times the baseline), but (a) breathing is 83% of the events
 and 92% of the hits, so micro NVPA is mostly a breathing score; laughter, sniff and throat clearing are detected poorly
@@ -534,6 +534,14 @@ is slightly optimistic. At this point about half of all detections are spurious 
 NVPA does not penalise them, so the spurious rate and the "tolerance check" line of the report must be read with it.
 Whether the late bias belongs to the corpus tags or to the window definition cannot be told from ground truth; for TTS output it is
 checked with the human `NV_placement` correlation. If all rare types were detected perfectly, NVPA could rise by at most about 0.08.
+
+**Confirmed run at the operating point** (dev ground truth, Track A, config `0:1`, scale 0.75): NVPA 0.850 (688/809 events; 95% CI
+utterance [0.825, 0.876], speaker-cluster [0.766, 0.881]); random placement 0.135 (std 0.013); macro over types 0.532, over speakers 0.726;
+detection rate 0.890, type accuracy given detection 0.956; misses: wrong_position 69, wrong_type 32, missing 19, alignment_unreliable 1;
+spurious 4.93 per 100 words. Tolerance check (NVPA / random): tolerance 0: 0.773 / 0.071; `0:1`: 0.850 / 0.136; 2: 0.865 / 0.285.
+**AutoScore of the ground truth (Track A): 0.562 of 0.70 (renormalised 0.802)**. With a low threshold, `wrong_position` also counts
+events whose type was detected anywhere else in the utterance (spurious detections), so it overstates real misplacement; the signed
+offset histogram of `nvpa-sweep` is the cleaner indicator of placement error.
 
 ### 21.5 Human evaluation as built
 
